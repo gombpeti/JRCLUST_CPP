@@ -2,10 +2,11 @@
 
 # Must be set BEFORE project(): enabling the CUDA language fills this in with a
 # conservative default (sm_52), and a later assignment would be ignored.
-# RTX 4060 Ti is sm_89. Override with -DCMAKE_CUDA_ARCHITECTURES=... elsewhere
-# (86 for a 3090, 75 for a 2080, "75;86;89" for a portable fat binary).
+# RTX 4060 Ti is sm_89, RTX 5070 Ti (Blackwell) is sm_120 and needs CUDA >= 12.8.
+# Override with -DCMAKE_CUDA_ARCHITECTURES=... elsewhere (86 for a 3090, 75 for
+# a 2080, "native" for whatever GPU is in the build machine).
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 89)
+    set(CMAKE_CUDA_ARCHITECTURES "89;120")
 endif()
 
 project(jrclust

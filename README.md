@@ -230,8 +230,8 @@ build.bat
 This pins the v142 toolset, configures with Ninja, and produces
 `build\bin\jrclust.exe`.
 
-To build for a different GPU, override the architecture (default is `89`, the
-RTX 4060 Ti):
+To build for a different GPU, override the architecture (default is `89;120`,
+the RTX 4060 Ti and the RTX 5070 Ti; `sm_120` needs CUDA 12.8 or newer):
 
 ```
 cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=86

@@ -50,7 +50,8 @@ Requirements (all already installed on this machine):
 MSVC is not optional. nvcc on Windows only supports MSVC as host compiler, so
 MinGW cannot be used.
 
-For a different GPU, override the architecture (default 89 = RTX 4060 Ti):
+For a different GPU, override the architecture (default "89;120" = RTX 4060 Ti
++ RTX 5070 Ti; sm_120 needs CUDA 12.8 or newer):
 
     cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=86
 
