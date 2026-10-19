@@ -1,12 +1,14 @@
-﻿cmake_minimum_required(VERSION 3.21)
+﻿# 3.24 for CMAKE_CUDA_ARCHITECTURES=native.
+cmake_minimum_required(VERSION 3.24)
 
 # Must be set BEFORE project(): enabling the CUDA language fills this in with a
 # conservative default (sm_52), and a later assignment would be ignored.
-# RTX 4060 Ti is sm_89, RTX 5070 Ti (Blackwell) is sm_120 and needs CUDA >= 12.8.
-# Override with -DCMAKE_CUDA_ARCHITECTURES=... elsewhere (86 for a 3090, 75 for
-# a 2080, "native" for whatever GPU is in the build machine).
+# "native" compiles for exactly the GPU(s) in the build machine, e.g. sm_120 on
+# an RTX 5070 Ti (which needs CUDA >= 12.8) or sm_89 on an RTX 4060 Ti.
+# Override with -DCMAKE_CUDA_ARCHITECTURES=... to build for another machine
+# (86 for a 3090, 75 for a 2080, "89;120" for a fat binary covering both).
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES "89;120")
+    set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
 
 project(jrclust

@@ -218,7 +218,7 @@ Matches the machine this was developed on:
 - **CUDA Toolkit 12.8**
 - **MSVC 14.29** (v142 toolset, ships with VS2019) — `nvcc` on Windows requires
   MSVC as the host compiler; MinGW is not supported
-- **CMake ≥ 3.21** and **Ninja** (both bundled with Qt under `C:\Qt\Tools`)
+- **CMake ≥ 3.24** and **Ninja** (both bundled with Qt under `C:\Qt\Tools`)
 - Qt 6.7.3 msvc2019_64 — *not needed until Stage 2*
 
 ## Build
@@ -230,14 +230,18 @@ build.bat
 This pins the v142 toolset, configures with Ninja, and produces
 `build\bin\jrclust.exe`.
 
-To build for a different GPU, override the architecture (default is `89;120`,
-the RTX 4060 Ti and the RTX 5070 Ti; `sm_120` needs CUDA 12.8 or newer):
+By default the CUDA kernels are compiled for the GPU in the build machine
+(`CMAKE_CUDA_ARCHITECTURES=native`), e.g. `sm_120` on an RTX 5070 Ti or `sm_89`
+on an RTX 4060 Ti. `sm_120` needs CUDA 12.8 or newer. To build for another
+machine, pass the architecture to `build.bat`:
 
 ```
-cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=86
+build.bat 89
+build.bat "89;120"
 ```
 
-Use a semicolon-separated list (`"75;86;89"`) for a portable fat binary.
+The second form is a fat binary that runs natively on both GPUs. With plain
+CMake use `-DCMAKE_CUDA_ARCHITECTURES=...` instead.
 
 ## Usage
 
