@@ -91,8 +91,10 @@ function jrc_relabel(prmFile, varargin)
 
     opts = struct('maxZeroLag', 3.0, 'maxISIRatio', 0.30, 'refractoryMs', 1.0, ...
                   'minSpikes', 30, 'marginFactor', 1.5, 'clearPrevious', true, ...
-                  'rejudgeNoise', false, 'minHalfWidthMs', 0, ...
-                  'maxShankCoverage', 0, 'outputDir', '', 'dryRun', false);
+                  'rejudgeNoise', false, 'minHalfWidthMs', 0.06, ...
+                  'maxShankCoverage', 0, 'loudSNR', 10, 'loudMaxSpikes', 1000, 'loudMinCrossings', 2, ...
+                  'maxCrossings', 12, 'maxSNR', 50, ...
+                  'outputDir', '', 'dryRun', false);
     for k = 1:2:numel(varargin)
         name = varargin{k};
         if ~isfield(opts, name)
@@ -191,6 +193,7 @@ function jrc_relabel(prmFile, varargin)
     % neuron the earlier settings had wrongly deleted.
     halfWidthMs = nan(nClusters, 1);
     shankCov    = nan(nClusters, 1);
+    crossings   = nan(nClusters, 1);
     if isfield(res, 'meanWfGlobalRaw') && isfield(res, 'clusterSites')
         wf = res.meanWfGlobalRaw;
         sites = double(res.clusterSites(:));
@@ -206,6 +209,22 @@ function jrc_relabel(prmFile, varargin)
             L = it;  while L > 1 && wpk(L-1) <= half, L = L - 1; end
             Rr = it; while Rr < numel(wpk) && wpk(Rr+1) <= half, Rr = Rr + 1; end
             halfWidthMs(c) = (Rr - L + 1) * 1000 / fs;
+
+            % Smoothness: how often the mean waveform crosses its own mean.
+            %
+            % A real unit leaves baseline once, troughs, and returns - two
+            % crossings - and stays smooth even when built from few spikes,
+            % because the spikes align. A cluster of unrelated transients
+            % averages to a jagged trace that wanders across its own mean
+            % repeatedly: measured here, units judged noise by eye scored 4
+            % to 20 while a genuine 88-spike neuron scored 2.
+            %
+            % Counted against the plain mean with no dead band. A band of
+            % 10% of Vpp was tried and destroyed the measurement, because Vpp
+            % is set by one large excursion while the ringing being counted
+            % is far smaller - every unit then read 1-2, noise and neurons
+            % alike.
+            crossings(c) = sum(abs(diff(sign(wpk - mean(wpk)))) > 0);
 
             if ~isempty(shankMap) && pk <= numel(shankMap)
                 amp = max(w,[],1) - min(w,[],1);
@@ -247,21 +266,85 @@ function jrc_relabel(prmFile, varargin)
     tooFew   = nSpk < opts.minSpikes;
     badISI   = ~tooFew & isiR > opts.maxISIRatio;
     badACG   = ~tooFew & ~badISI & isfinite(zlR) & zlR > opts.maxZeroLag;
-    % Both shape tests are OFF by default (threshold 0 disables them).
+    % Trough narrower than a membrane potential can move and return.
     %
-    % They encode the right idea - a one-sample trough is not a spike, and a
-    % deflection across a shank is common mode - but neither has been
-    % calibrated, and a trial run condemned 268 of 1143 units on width alone,
-    % which is far more than the C++ classifier's equivalent test flags. A
-    % test that fires on 23% of a recording is measuring something other than
-    % what it claims to. The C++ classifier already applies its own versions
-    % during the sort, so nothing is lost by leaving these off until the
-    % threshold has been fitted to units judged by eye.
+    % The default of 0.06 ms catches a trough spanning ONE sample at 20 kHz
+    % and nothing wider. At 0.1 ms the same test fired on 190 of 755 units, a
+    % quarter of the recording, which means it was measuring something other
+    % than what it claims to: a real trough spans 0.2-0.4 ms, but the 5th
+    % percentile here is already 0.100, so a cut at 0.1 sits inside the
+    % ordinary population. 0.06 sits below all of it.
     badWidth = opts.minHalfWidthMs > 0 & ~tooFew & ...
                isfinite(halfWidthMs) & halfWidthMs <= opts.minHalfWidthMs;
+
+    % Shank coverage cannot work on this data, and stays off (threshold 0).
+    % meanWfGlobalRaw is nSamples x nSites x nClusters, but JRCLUST fills
+    % only the unit's own site neighbourhood and leaves every other site at
+    % zero - 9 sites of 512 here. No coverage or spread figure computed from
+    % it can exceed the neighbourhood size, whatever threshold is set. The
+    % C++ classifier's maxSpreadSites = 20 was unreachable for exactly this
+    % reason, which is why it never fired once on a real recording.
     badShank = opts.maxShankCoverage > 0 & ~tooFew & ...
                isfinite(shankCov) & shankCov > opts.maxShankCoverage;
-    failed   = tooFew | badISI | badACG | badWidth | badShank;
+
+    % Loud but nearly silent.
+    %
+    % SNR and firing rate are loosely coupled for a real neuron: a cell close
+    % enough to the electrode to produce a large SNR is close enough to be
+    % detected often. A unit with SNR 22 that fires 164 times in 2.6 hours is
+    % not a quiet neuron - it is a handful of large transients that clustered
+    % together, and the waveform says so: individual spikes from 95 to
+    % 3046 uV, a mean waveform of only 48 uV because they do not align, and
+    % the largest amplitude sitting on a NEIGHBOURING site rather than its
+    % own.
+    %
+    % This is the test that catches what the spike-train tests cannot. A
+    % cluster of large transients separated by more than a millisecond has a
+    % clean refractory period and a clean autocorrelogram; only its shape and
+    % its implausible rate give it away.
+    %
+    % Deliberately narrow: across 755 units it condemns 13 holding 2374
+    % spikes, 0.015% of the recording, so it removes the degenerate cases
+    % without touching genuinely sparse units of ordinary amplitude.
+    if isfield(res, 'unitSNR') && numel(res.unitSNR) >= nClusters
+        snr = double(res.unitSNR(:));
+        snr = snr(1:nClusters);
+    else
+        snr = nan(nClusters, 1);
+    end
+    % The third condition is what keeps real quiet neurons. A large, rarely
+    % firing unit whose waveform is CLEAN is simply a sparse cell, and
+    % deleting it would be the same error as before: an 88-spike unit at SNR
+    % 11.7 with a 0.200 ms trough and two crossings was condemned by the
+    % first two conditions alone, and it is a neuron. Requiring the waveform
+    % to be non-smooth as well separates it from units of similar amplitude
+    % and rate that score 4 to 8 crossings.
+    badLoud = ~tooFew & isfinite(snr) & isfinite(crossings) & ...
+              snr > opts.loudSNR & nSpk < opts.loudMaxSpikes & ...
+              crossings > opts.loudMinCrossings;
+
+    % Ringing, on its own. Well above the 95th percentile of this recording
+    % (10), so it reaches only the clearly oscillatory waveforms rather than
+    % the ordinary spread.
+    badRing = opts.maxCrossings > 0 & ~tooFew & ...
+              isfinite(crossings) & crossings > opts.maxCrossings;
+
+    % Amplitude beyond anything biological, decisive on its own.
+    %
+    % Needed because the smoothness condition on badLoud, which protects
+    % genuinely quiet neurons, also shields artifacts whose mean waveform
+    % happens to be smooth. A unit with SNR 160 and 81 spikes scored only 2
+    % crossings and walked through every other test.
+    %
+    % Safe because the two populations are far apart: measured over this
+    % recording, units clean by every independent measure reach SNR 29.4 at
+    % most, while the units above 50 pin near 1000 uV - the amplifier rail -
+    % or sit at 100 to 270. The cut sits in empty space between them, so it
+    % cannot reach a real cell however quiet or however close to the
+    % electrode.
+    badSNR = opts.maxSNR > 0 & ~tooFew & isfinite(snr) & snr > opts.maxSNR;
+
+    failed   = tooFew | badISI | badACG | badWidth | badShank | badLoud | badRing | badSNR;
 
     % Separate units that fail decisively from units that fail by a hair.
     %
@@ -280,7 +363,7 @@ function jrc_relabel(prmFile, varargin)
     % A shape failure is decisive on its own. There is no "marginally one
     % sample wide": the trough either spans more than a couple of samples or
     % it does not, and a deflection on half a shank is not a near miss.
-    decisive = tooFew | badWidth | badShank | ...
+    decisive = tooFew | badWidth | badShank | badLoud | badRing | badSNR | ...
                (isiR > opts.marginFactor * opts.maxISIRatio) | ...
                (isfinite(zlR) & zlR > opts.marginFactor * opts.maxZeroLag);
 
@@ -298,6 +381,9 @@ function jrc_relabel(prmFile, varargin)
     fprintf('  autocorrelogram peaks at zero lag  : %4d units\n', sum(badACG));
     fprintf('  trough too narrow to be a spike    : %4d units\n', sum(badWidth));
     fprintf('  covers too much of its own shank   : %4d units\n', sum(badShank));
+    fprintf('  large amplitude but almost silent  : %4d units\n', sum(badLoud));
+    fprintf('  waveform rings instead of spiking  : %4d units\n', sum(badRing));
+    fprintf('  amplitude beyond anything biologic : %4d units\n', sum(badSNR));
     fprintf('  ------------------------------------------------\n');
     fprintf('  failed a test                      : %4d of %d units\n\n', ...
             sum(failed), nClusters);
@@ -325,8 +411,12 @@ function jrc_relabel(prmFile, varargin)
                 site = res.clusterSites(c);
             end
             f = '';
-            if badISI(c), f = [f 'ISI ']; end
-            if badACG(c), f = [f 'ACG']; end
+            if badISI(c),   f = [f 'ISI ']; end
+            if badACG(c),   f = [f 'ACG ']; end
+            if badWidth(c), f = [f 'narrow ']; end
+            if badRing(c),  f = [f 'ringing ']; end
+            if badSNR(c),   f = [f 'SNR ']; end
+            if badLoud(c),  f = [f 'loud-but-silent']; end
             fprintf('  %6d %10d %8d %10.3f %10.3f  %s\n', ...
                     c, nSpk(c), site, zlR(c), isiR(c), f);
         end
