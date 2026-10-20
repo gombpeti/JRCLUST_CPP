@@ -163,13 +163,24 @@ function jrc_automerge(prmFile, varargin)
 
     fprintf('\nWriting %s\n', resFile);
     jrclust.utils.saveStruct(res, resFile);
-    fprintf(['\nDone. Mean waveforms and quality scores are now stale for the\n' ...
-             'merged units - open the GUI and run\n' ...
-             '    Edit > Recompute all mean waveforms\n']);
+
+    % Merging makes the mean waveforms, similarity matrix, centroids and
+    % quality scores describe a clustering that no longer exists, and the GUI
+    % reads all of them from the file rather than regenerating them on load.
+    % waveformSim matters most: it is what the space key uses to jump to the
+    % most similar unit, so a stale one silently breaks navigation and shows
+    % a similarity matrix of the wrong clustering. Telling the user to run
+    % Edit > Recompute all mean waveforms was not enough - that rebuilds the
+    % waveforms but is easy to forget, and nothing warns when it is skipped.
+    jrc_recompute(prmFile, 'outputDir', opts.outputDir);
 end
 
 % ---------------------------------------------------------------------------
-function showSpectrum(W, n)
+function showSpectrum(W, ~)
+    %SHOWSPECTRUM How many pairs each similarity threshold would propose.
+    %   Printed when nothing is proposed at the chosen cut, which is the
+    %   useful moment: maxUnitSim 0.98 proposed zero pairs on a real
+    %   recording, so Merge auto appeared to do nothing at all.
     U = triu(W, 1);
     U = U(isfinite(U));
     fprintf('\n%10s %12s\n', 'threshold', 'pairs');
