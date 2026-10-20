@@ -93,7 +93,7 @@ function jrc_relabel(prmFile, varargin)
                   'minSpikes', 30, 'marginFactor', 1.5, 'clearPrevious', true, ...
                   'rejudgeNoise', false, 'minHalfWidthMs', 0.06, ...
                   'maxShankCoverage', 0, 'loudSNR', 10, 'loudMaxSpikes', 1000, 'loudMinCrossings', 2, ...
-                  'maxCrossings', 12, 'maxSNR', 50, ...
+                  'maxCrossings', 12, 'maxSNR', 50, 'minTemplateScore', 0, ...
                   'outputDir', '', 'dryRun', false);
     for k = 1:2:numel(varargin)
         name = varargin{k};
@@ -237,6 +237,11 @@ function jrc_relabel(prmFile, varargin)
         end
     end
 
+    % --- template match, derived from this recording with no labels -------
+    % See buildTemplate below. Reported always; condemns only if
+    % minTemplateScore is set above 0, which it is NOT by default.
+    [tmplScore, tmplOK, tmplWhy] = templateScores(res, nClusters, fs);
+
     nSpk = zeros(nClusters, 1);
     isiR = nan(nClusters, 1);
     zlR  = nan(nClusters, 1);
@@ -344,7 +349,13 @@ function jrc_relabel(prmFile, varargin)
     % electrode.
     badSNR = opts.maxSNR > 0 & ~tooFew & isfinite(snr) & snr > opts.maxSNR;
 
-    failed   = tooFew | badISI | badACG | badWidth | badShank | badLoud | badRing | badSNR;
+    % Template match. OFF by default (threshold 0), because one template
+    % assumes one waveform family and the populations still overlap - see
+    % templateScores. Reported either way so the score can be judged.
+    badTmpl = opts.minTemplateScore > 0 & tmplOK & ~tooFew & ...
+              isfinite(tmplScore) & tmplScore < opts.minTemplateScore;
+
+    failed   = tooFew | badISI | badACG | badWidth | badShank | badLoud | badRing | badSNR | badTmpl;
 
     % Separate units that fail decisively from units that fail by a hair.
     %
@@ -363,7 +374,7 @@ function jrc_relabel(prmFile, varargin)
     % A shape failure is decisive on its own. There is no "marginally one
     % sample wide": the trough either spans more than a couple of samples or
     % it does not, and a deflection on half a shank is not a near miss.
-    decisive = tooFew | badWidth | badShank | badLoud | badRing | badSNR | ...
+    decisive = tooFew | badWidth | badShank | badLoud | badRing | badSNR | badTmpl | ...
                (isiR > opts.marginFactor * opts.maxISIRatio) | ...
                (isfinite(zlR) & zlR > opts.marginFactor * opts.maxZeroLag);
 
@@ -384,6 +395,26 @@ function jrc_relabel(prmFile, varargin)
     fprintf('  large amplitude but almost silent  : %4d units\n', sum(badLoud));
     fprintf('  waveform rings instead of spiking  : %4d units\n', sum(badRing));
     fprintf('  amplitude beyond anything biologic : %4d units\n', sum(badSNR));
+    if opts.minTemplateScore > 0
+        fprintf('  waveform unlike a spike (template) : %4d units\n', sum(badTmpl));
+    end
+
+    % Always reported, whether or not it condemns anything: the score is the
+    % most informative single number about a unit's shape, and seeing its
+    % distribution is how the threshold gets chosen.
+    if tmplOK
+        good = tmplScore(isfinite(tmplScore));
+        fprintf(['\n  template match (no labels used; %s)\n' ...
+                 '    pct      5     25     50     75     95\n' ...
+                 '    val %6.2f %6.2f %6.2f %6.2f %6.2f\n'], ...
+                tmplWhy, prctile(good,[5 25 50 75 95]));
+        if opts.minTemplateScore <= 0
+            fprintf(['    not condemning on this - pass ''minTemplateScore'', 0.85\n' ...
+                     '    to enable it once the cut has been judged\n']);
+        end
+    else
+        fprintf('\n  template match unavailable: %s\n', tmplWhy);
+    end
     fprintf('  ------------------------------------------------\n');
     fprintf('  failed a test                      : %4d of %d units\n\n', ...
             sum(failed), nClusters);
@@ -471,6 +502,107 @@ function jrc_relabel(prmFile, varargin)
 end
 
 % ---------------------------------------------------------------------------
+function [score, ok, why] = templateScores(res, nClusters, fs)
+    %TEMPLATESCORES How spike-shaped each unit is, judged without labels.
+    %
+    %   Answers the objection "how can you call something not-a-neuron if you
+    %   were never shown a neuron" in two steps, neither of which needs
+    %   labelled examples:
+    %
+    %     1. A CANDIDATE template comes from the recording itself. JRCLUST
+    %        centres each spike window on the detected peak, so most units
+    %        already carry their trough at the same sample. Normalise each
+    %        unit's mean waveform to its own trough depth - leaving shape
+    %        only, with amplitude, gain and probe divided out - and take the
+    %        per-sample median of the aligned ones. Real units outnumber
+    %        noise by better than ten to one, so the median is theirs.
+    %
+    %     2. PHYSIOLOGY decides whether that candidate is a spike, using
+    %        constraints from membrane biophysics rather than precedent: one
+    %        dominant excursion, a duration no membrane can beat, a
+    %        repolarisation, a return to baseline. If the candidate fails,
+    %        the recording is majority noise and this refuses to score rather
+    %        than silently inverting itself.
+    %
+    %   Because every recording builds its own template, nothing transfers
+    %   between sessions or animals - which is exactly why it generalises. A
+    %   different probe, filter or preparation produces a different template,
+    %   correctly, since its own neurons define what normal looks like there.
+    %
+    %   KNOWN LIMITATION: one template assumes one waveform family. A
+    %   legitimate but atypical cell - a fast-spiking interneuron with a
+    %   narrow spike, say - scores low for being unusual rather than for
+    %   being fake. On a measured recording, units of 85,000 to 220,000
+    %   spikes at SNR 6.7 to 12.9 scored 0.72 to 0.76 while hand-judged noise
+    %   scored 0.25 to 0.77, so the two overlap. That is why nothing is
+    %   condemned on this score by default.
+    score = nan(nClusters,1); ok = false; why = 'no waveforms available';
+    if ~isfield(res,'meanWfGlobalRaw') || ~isfield(res,'clusterSites'), return; end
+
+    wf = res.meanWfGlobalRaw;
+    nS = size(wf,1);
+    sites = double(res.clusterSites(:));
+
+    raw = nan(nS, nClusters); troughAt = nan(nClusters,1);
+    for c = 1:min(nClusters, size(wf,3))
+        pk = sites(c);
+        if pk < 1 || pk > size(wf,2), continue; end
+        w = double(wf(:,pk,c));
+        [tr, it] = min(w);
+        if tr >= 0, continue; end
+        raw(:,c) = w / abs(tr);
+        troughAt(c) = it;
+    end
+    if all(isnan(troughAt)), return; end
+
+    centre  = mode(troughAt(~isnan(troughAt)));
+    aligned = troughAt == centre;
+    if sum(aligned) < 20, why = 'too few aligned units'; return; end
+    tmpl = median(raw(:, aligned), 2);
+
+    % -- physiology check on the candidate ------------------------------
+    [tr, it] = min(tmpl);
+    reb  = max(tmpl(it:end));
+    half = tr/2;
+    L=it; while L>1 && tmpl(L-1)<=half, L=L-1; end
+    R=it; while R<nS && tmpl(R+1)<=half, R=R+1; end
+    halfW = (R-L+1)*1000/fs;
+
+    % Significant excursions, NOT baseline crossings. The raw window spans
+    % about 2 ms, so most of it is flat tail; counting crossings there
+    % measures sample noise and fails good templates.
+    big = abs(tmpl) > 0.25;
+    nExc = sum(diff([false; big(:)]) == 1);
+
+    ok = nExc <= 2 && abs(tr) > abs(reb) && halfW >= 0.1 && halfW <= 1.5 && ...
+         reb > 0.05 && abs(median(tmpl(min(nS,it+14):end))) < 0.35;
+    if ~ok
+        why = sprintf(['template is not spike-shaped (%d excursions, ' ...
+                       'half-width %.3f ms) - recording may be majority noise'], ...
+                      nExc, halfW);
+        return;
+    end
+    why = sprintf('template OK: half-width %.3f ms, rebound %.2f, from %d units', ...
+                  halfW, reb, sum(aligned));
+
+    % -- score every unit, best match over a shift ----------------------
+    tc = tmpl - mean(tmpl);
+    maxShift = 8;
+    for c = 1:nClusters
+        if all(isnan(raw(:,c))), continue; end
+        best = -1;
+        for s = -maxShift:maxShift
+            v = circshift(raw(:,c), s);
+            keep = (1+max(0,s)) : (nS+min(0,s));
+            vv = v(keep) - mean(v(keep));
+            tt = tc(keep) - mean(tc(keep));
+            d = norm(vv)*norm(tt);
+            if d > 0, best = max(best, (vv'*tt)/d); end
+        end
+        score(c) = best;
+    end
+end
+
 function v = readVector(prmText, name)
     %READVECTOR A bracketed numeric vector from the .prm text, or empty.
     v = [];

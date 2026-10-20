@@ -11,3 +11,6 @@ CMakeUserPresets.json
 *.pdb
 *.ilk
 *.exe
+
+# JRCLUST backups created when patching
+matlab/JRCLUST5.0/**/*.bak
