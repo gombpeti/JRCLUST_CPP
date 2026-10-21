@@ -75,35 +75,40 @@ function hFigCorr = plotFigCorr(hFigCorr, hClust, hCfg, selected)
     for r = 1:nSel
         for c = 1:nSel
             key = sprintf('cc%d_%d', r, c);
-            pos = [pad + (c-1)*w, 1 - pad*0.6 - r*h, w*0.86, h*0.80];
-            hFigCorr.addAxes(key, 'Position', pos);
+            pos = [pad + (c-1)*w, 1 - pad*0.75 - r*h, w*0.84, h*0.74];
+
+            % addAxes returns the handle, and addPlot needs it as its FIRST
+            % argument: without it addPlot falls back to obj.gca(), so every
+            % bar lands in one default axes spanning the whole figure and the
+            % panels draw on top of each other.
+            hAx = hFigCorr.addAxes(key, 'Position', pos);
 
             isAuto = (r == c);
             counts = correlogram(binned{r}, binned{c}, nLags, isAuto);
 
-            hFigCorr.addPlot(['b' key], @bar, lagTime, counts, 1);
+            hFigCorr.addPlot(['b' key], @bar, hAx, lagTime, counts, 1);
+
             hFigCorr.axApply(key, @set, 'XLim', jitterMs*[-nLags, nLags], ...
                              'YScale', 'log', 'FontSize', 7);
             hFigCorr.axApply(key, @grid, 'on');
 
-            % Label the edges only; an N x N grid of fully labelled axes is
-            % unreadable past about three units.
-            if r == 1
-                hFigCorr.axApply(key, @title, sprintf('%d', selected(c)), 'FontSize', 8);
+            % Every panel says which pair it is, so a cell can be read
+            % without counting rows and columns back to an edge label.
+            if isAuto
+                hFigCorr.axApply(key, @title, sprintf('Unit %d', selected(r)), ...
+                                 'FontSize', 8, 'FontWeight', 'bold');
+                % tinted, so self-comparisons are obvious at a glance
+                hFigCorr.axApply(key, @set, 'Color', [0.95 0.95 0.88]);
+            else
+                hFigCorr.axApply(key, @title, ...
+                                 sprintf('%d vs %d', selected(r), selected(c)), ...
+                                 'FontSize', 8);
             end
-            if c == 1
-                hFigCorr.axApply(key, @ylabel, sprintf('%d', selected(r)), 'FontSize', 8);
-            end
+
             if r == nSel
                 hFigCorr.axApply(key, @xlabel, 'ms', 'FontSize', 7);
             else
                 hFigCorr.axApply(key, @set, 'XTickLabel', []);
-            end
-
-            % The diagonal is an autocorrelogram; tint it so the eye can
-            % tell at a glance which panels are self-comparisons.
-            if isAuto
-                hFigCorr.axApply(key, @set, 'Color', [0.95 0.95 0.88]);
             end
         end
     end
