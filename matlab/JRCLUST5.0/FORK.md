@@ -69,6 +69,41 @@ better estimator here: the inputs are ordered by time, so a regular stride
 draws from the whole recording in proportion, whereas a random draw is uniform
 only in expectation and can over-weight a high-rate stretch in any single run.
 
+### Selecting more than two units
+
+`updateSelect.m` truncated the selection to `iClusters(1:2)`, so the whole GUI
+was capped at a pair. It now accepts any number, in click order, so the first
+unit stays primary and the pairwise views keep following it.
+
+`mouseClickFigWav.m` previously replaced the second slot on a right click —
+`[obj.selected(1) iCluster]` — which made a selection of three impossible.
+Ctrl-click, right click and shift-click now ADD a unit, and clicking a
+selected unit again removes it.
+
+`updateFigCorr.m` draws an **N x N correlogram matrix** when more than two
+units are selected: autocorrelograms down the diagonal (tinted), cross-
+correlograms off it. One and two units behave exactly as before.
+
+That matrix is what makes a group of units decidable in one look, because a
+cross-correlogram answers a question waveform similarity cannot:
+
+| cross-correlogram | means |
+| --- | --- |
+| dip at zero | the two never fire together within a millisecond, which only one refractory period explains - **one cell split in two** |
+| flat | independent - **different cells**, however alike their waveforms |
+| peak at zero | the same event counted twice - duplicate detections |
+
+`mergeSelected.m` had to change with it. It took `min(selected)` and
+`max(selected)`, which was correct while the cap was two but would, with five
+units selected, have merged the outermost pair and **silently left the middle
+three behind** while reporting success. It now merges all of them, highest id
+first so the renumbering after each step cannot invalidate the ids still
+pending.
+
+Other views (FigProj, FigTime, FigHist) still read `selected(1)` and
+`selected(2)`, so they show the first two and degrade gracefully rather than
+breaking.
+
 ### `+curate/@CurateController/addMenu.m` — three menu items
 
 - **File → Save As Pruned** — writes a reduced copy with the discarded spikes

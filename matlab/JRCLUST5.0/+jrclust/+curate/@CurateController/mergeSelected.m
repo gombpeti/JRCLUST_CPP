@@ -9,29 +9,53 @@ function mergeSelected(obj)
         return;
     end
 
-    iCluster = min(obj.selected);
-    jCluster = max(obj.selected);
+    % Merge EVERY selected unit, not just the first and last.
+    %
+    % This used to take min(selected) and max(selected), which was right
+    % while the selection was capped at two. Now that any number can be
+    % selected it would silently merge the outermost pair and leave the
+    % middle ones behind - the worst kind of failure, since the GUI would
+    % report a successful merge and the remaining units look merged until
+    % you count them.
+    %
+    % Merged into the lowest id, highest first, so that the renumbering
+    % after each step cannot invalidate the ids still to be merged.
+    targets = sort(unique(obj.selected(:)'), 'descend');
+    iCluster = targets(end);          % the survivor
+    toMerge = targets(1:end-1);
 
     obj.isWorking = 1;
 
-    % speculatively merge clusters
     showSubset = obj.showSubset;
+    spikeClusters = obj.hClust.spikeClusters;
+    metadata = [];
+    merged = [];
 
-    res = obj.hClust.mergeUnits(obj.hClust.spikeClusters, iCluster, jCluster);
-    % operation found to be inconsistent
-    if isempty(res.metadata)
-        warning('failed to merge units %d and %d', iCluster, jCluster);
-        obj.isWorking = 0;
+    for jCluster = toMerge
+        res = obj.hClust.mergeUnits(spikeClusters, iCluster, jCluster);
+        if isempty(res.metadata)
+            warning('failed to merge units %d and %d', iCluster, jCluster);
+            continue;
+        end
+        spikeClusters = res.spikeClusters;
+        metadata = res.metadata;
+        merged(end+1) = jCluster; %#ok<AGROW>
 
-        return;
-    end
-
-    msg = sprintf('merge %d and %d', iCluster, jCluster);
-    try
-        obj.hClust.commit(res(end).spikeClusters, res(end).metadata, msg);
         showSubset(showSubset == jCluster) = [];
         mask = showSubset > jCluster;
         showSubset(mask) = showSubset(mask) - 1;
+    end
+
+    if isempty(metadata)
+        obj.isWorking = 0;
+        return;
+    end
+
+    msg = sprintf('merge %s into %d', ...
+                  strjoin(arrayfun(@num2str, sort(merged), 'UniformOutput', 0), ','), ...
+                  iCluster);
+    try
+        obj.hClust.commit(spikeClusters, metadata, msg);
         obj.showSubset = showSubset;
     catch ME
         warning('Failed to merge: %s', ME.message);

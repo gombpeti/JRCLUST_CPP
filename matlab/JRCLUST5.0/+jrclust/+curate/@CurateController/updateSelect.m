@@ -1,14 +1,23 @@
 function updateSelect(obj, iClusters, force)
     %UPDATESELECT Select a (pair of) cluster(s) across all views
     iClusters = min(max(iClusters, 1), obj.hClust.nClusters);
-    if numel(iClusters) > 2
-        iClusters = iClusters(1:2);
-    elseif isempty(iClusters)
+    if isempty(iClusters)
         iClusters = 1;
     end
-    if numel(iClusters) == 2 && diff(iClusters) == 0
-        iClusters = iClusters(1);
-    end
+
+    % Any number of units may be selected, not just a pair.
+    %
+    % This used to truncate to iClusters(1:2), which capped the whole GUI at
+    % two units. The views that compare a pair read selected(1) and
+    % selected(2) and are unaffected by extras; FigCorr uses the full list to
+    % draw an N x N correlogram matrix, with autocorrelograms down the
+    % diagonal and cross-correlograms off it.
+    %
+    % Order is preserved rather than sorted: the first unit stays primary, so
+    % the site, the projection sites and the pairwise views keep following
+    % the unit that was clicked first.
+    [~, keep] = unique(iClusters, 'stable');
+    iClusters = iClusters(sort(keep));
 
     % force update, e.g., after a delete
     if nargin < 3
