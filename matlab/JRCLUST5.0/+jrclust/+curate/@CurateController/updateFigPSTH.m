@@ -79,7 +79,7 @@ function [hFigTrial1, hFigTrial2] = doPlotFigPSTH(hClust, hFigTrial1, hFigTrial2
     end
 
     % show this plot iff we have a second selected cluster
-    if numel(selected) == 2
+    if numel(selected) >= 2
         hFigTrial2.figApply(@set, 'Visible', 'on');
         plot_figure_psth_(hFigTrial2, selected(2), trialTimes, hClust, hCfg);
     else

@@ -12,7 +12,7 @@ function dispFeatures = getFigProjFeatures(hClust, sitesToShow, selected)
     end
 
     iCluster = selected(1);
-    if numel(selected) == 2
+    if numel(selected) >= 2
         jCluster = selected(2);
     else
         jCluster = [];

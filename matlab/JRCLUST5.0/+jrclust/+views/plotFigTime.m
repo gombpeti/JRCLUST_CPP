@@ -54,28 +54,65 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
     [bgFeatures, bgTimes] = getFigTimeFeatures(hClust, iSite); % plot background
     [fgFeatures, fgTimes, YLabel] = getFigTimeFeatures(hClust, iSite, selected(1),channel_idx); % plot primary selected cluster
 
-    if numel(selected) == 2
-        [fgFeatures2, fgTimes2] = getFigTimeFeatures(hClust, iSite, selected(2));
-        figTitle = sprintf('Unit %d (black), Unit %d (red); (press [H] for help)', selected(1), selected(2));
+    % Every selected unit gets a series, in its own cluster colour - the one
+    % the waveform view uses - rather than only the first two in fixed black
+    % and red.
+    nSel = numel(selected);
+    selColors = jrclust.views.selectionColors(selected, hClust.nClusters);
+
+    selFeatures = cell(nSel, 1);
+    selTimes = cell(nSel, 1);
+    selFeatures{1} = fgFeatures;
+    selTimes{1} = fgTimes;
+    for iSel = 2:nSel
+        [selFeatures{iSel}, selTimes{iSel}] = getFigTimeFeatures(hClust, iSite, selected(iSel));
+    end
+
+    % Kept for the side histogram below, which still draws two series.
+    if nSel >= 2
+        fgFeatures2 = selFeatures{2};
+        figTitle = sprintf('Units %s, coloured as in the waveform view; (press [H] for help)', ...
+                           strjoin(arrayfun(@num2str, selected, 'UniformOutput', 0), ', '));
     else
         fgFeatures2 = [];
-        fgTimes2 = [];
-        figTitle = sprintf('Unit %d (black); (press [H] for help)', selected(1));
+        figTitle = sprintf('Unit %d; (press [H] for help)', selected(1));
     end
-   
-    binlimits = [min(bgFeatures) max(bgFeatures)]+eps;     
-    
-    % remove foreground events from background cluster    
-    bg_idx = ~ismember(bgTimes,union(fgTimes,fgTimes2));
+
+    binlimits = [min(bgFeatures) max(bgFeatures)]+eps;
+
+    % remove foreground events from background cluster
+    allFgTimes = vertcat(selTimes{:});
+    bg_idx = ~ismember(bgTimes, allFgTimes);
     bgFeatures = bgFeatures(bg_idx);
     bgTimes = bgTimes(bg_idx);
 
     vppLim = [0, abs(maxAmp)];
-    
+
     %update scatter plots
     hFigTime.updatePlot('background', bgTimes, bgFeatures);
-    hFigTime.updatePlot('foreground', fgTimes, fgFeatures);
-    hFigTime.updatePlot('foreground2', fgTimes2, fgFeatures2);
+
+    % Series beyond the first two are created on demand and removed when the
+    % selection shrinks, so a stale unit never lingers on the plot.
+    k = nSel + 1;
+    while hFigTime.hasPlot(sprintf('foreground%d', k))
+        hFigTime.rmPlot(sprintf('foreground%d', k));
+        k = k + 1;
+    end
+
+    for iSel = 1:nSel
+        if iSel == 1
+            key = 'foreground';
+        elseif iSel == 2
+            key = 'foreground2';
+        else
+            key = sprintf('foreground%d', iSel);
+            if ~hFigTime.hasPlot(key)
+                hFigTime.addPlot(key, nan, nan, 'Marker', '.', 'LineStyle', 'none');
+            end
+        end
+        hFigTime.plotApply(key, @set, 'Color', selColors(iSel, :));
+        hFigTime.updatePlot(key, selTimes{iSel}, selFeatures{iSel});
+    end
     imrectSetPosition(hFigTime, 'hRect', timeLimits, vppLim);
 
     % update histograms

@@ -8,7 +8,7 @@ function annotateUnit(obj, note, confirm)
     iCluster = obj.selected(1);
 
     % set equal to another cluster?
-    if strcmp(note, '=') && numel(obj.selected) == 2
+    if strcmp(note, '=') && numel(obj.selected) >= 2
         note = sprintf('=%d', obj.selected(2));
     elseif strcmp(note, '=')
         msgbox('Right-click another unit to set equal to selected unit');

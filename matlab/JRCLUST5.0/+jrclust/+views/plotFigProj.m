@@ -73,7 +73,7 @@ function hFigProj = plotFigProj(hFigProj, hClust, sitesToShow, selected, boundSc
     plotFeatures(hFigProj, 'foreground', fgYData, fgXData, boundScale, hCfg);
 
     % plot secondary foreground spikes
-    if numel(selected) == 2
+    if numel(selected) >= 2
         plotFeatures(hFigProj, 'foreground2', fg2YData, fg2XData, boundScale, hCfg);
         figTitle = sprintf('Unit %d (black), Unit %d (red); (press [H] for help)', selected(1), selected(2));
     else % or hide the plot

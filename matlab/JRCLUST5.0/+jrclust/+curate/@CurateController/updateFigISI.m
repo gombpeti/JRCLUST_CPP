@@ -3,11 +3,9 @@ function updateFigISI(obj)
     if isempty(obj.selected) || ~obj.hasFig('FigISI')
         return;
     end
-    nSpikes(1) = numel(obj.hClust.spikesByCluster{obj.selected(1)});
-    if numel(obj.selected)>1
-        nSpikes(2) = numel(obj.hClust.spikesByCluster{obj.selected(2)});
-    end    
-    if all(nSpikes>1)
+
+    nSpikes = cellfun(@(c) numel(c), obj.hClust.spikesByCluster(obj.selected));
+    if all(nSpikes > 1)
         plotFigISI(obj.hFigs('FigISI'), obj.hClust, obj.hCfg, obj.selected);
     else
         clf(obj.hFigs('FigISI'));
@@ -16,49 +14,62 @@ end
 
 %% LOCAL FUNCTIONS
 function hFigISI = plotFigISI(hFigISI, hClust, hCfg, selected)
-    %DOPLOTFIGISI Plot return map (ISI vs. previous ISI)
-    if numel(selected) == 1
-        iCluster = selected(1);
-        jCluster = iCluster;
-    else
-        iCluster = selected(1);
-        jCluster = selected(2);
-    end
+    %PLOTFIGISI Plot return map (ISI vs. previous ISI) for every selection
+    %
+    %   One series per selected unit, each in that unit's own cluster colour
+    %   - the same colour the waveform view uses - so the series can be
+    %   matched to a unit without a legend. Previously only two units were
+    %   drawn, in fixed black and red that did not correspond to anything
+    %   else on screen.
+    nSel = numel(selected);
+    colors = jrclust.views.selectionColors(selected, hClust.nClusters);
 
-    [iIsiK, iIsiK1] = getReturnMap(iCluster, hClust, hCfg);
     if ~hFigISI.hasAxes('default')
         hFigISI.addAxes('default');
-        hFigISI.addPlot('foreground', nan, nan, 'Color', hCfg.colorMap(2, :), 'Marker', 'o', 'LineStyle', 'none');
-        hFigISI.addPlot('foreground2', nan, nan, 'Color', hCfg.colorMap(3, :), 'Marker', 'o', 'LineStyle', 'none');
-
         hFigISI.axApply('default', @set, 'XScale','log', 'YScale','log');
-
         hFigISI.axApply('default', @xlabel, 'ISI_{k} (ms)');
         hFigISI.axApply('default', @ylabel, 'ISI_{k+1} (ms)');
-
-        %axis_(S_fig.hAx, [1 10000 1 10000]);
         hFigISI.axApply('default', @axis, [1 10000 1 10000]);
         hFigISI.axApply('default', @grid, 'on');
 
-        % show refractory line
+        % refractory period reference lines
         hFigISI.addPlot('refracLine1', @line, hFigISI.axApply('default', @get, 'XLim'), hCfg.refracInt*[1 1], 'Color', [1 0 0]);
         hFigISI.addPlot('refracLine2', @line, hCfg.refracInt*[1 1], hFigISI.axApply('default', @get, 'YLim'), 'Color', [1 0 0]);
     end
 
-    hFigISI.updatePlot('foreground', iIsiK, iIsiK1);
+    % Drop series left behind by a larger previous selection.
+    k = nSel + 1;
+    while hFigISI.hasPlot(sprintf('foreground%d', k))
+        hFigISI.rmPlot(sprintf('foreground%d', k));
+        k = k + 1;
+    end
+    % the original two keys, no longer used
+    if hFigISI.hasPlot('foreground'),  hFigISI.rmPlot('foreground');  end
+    if hFigISI.hasPlot('foreground2'), hFigISI.rmPlot('foreground2'); end
 
-    if iCluster ~= jCluster
-        [jIsiK, jIsiK1] = getReturnMap(jCluster, hClust, hCfg);
-        hFigISI.axApply('default', @title, sprintf('Unit %d (black) vs. Unit %d (red)', iCluster, jCluster));
-        hFigISI.updatePlot('foreground2', jIsiK, jIsiK1);
+    for iSel = 1:nSel
+        key = sprintf('foreground%d', iSel);
+        [isiK, isiK1] = getReturnMap(selected(iSel), hClust, hCfg);
+        if ~hFigISI.hasPlot(key)
+            hFigISI.addPlot(key, nan, nan, 'Color', colors(iSel, :), ...
+                            'Marker', 'o', 'LineStyle', 'none');
+        else
+            hFigISI.plotApply(key, @set, 'Color', colors(iSel, :));
+        end
+        hFigISI.updatePlot(key, isiK, isiK1);
+    end
+
+    if nSel == 1
+        hFigISI.axApply('default', @title, sprintf('Unit %d', selected(1)));
     else
-        hFigISI.axApply('default', @title, sprintf('Unit %d', iCluster));
-        hFigISI.clearPlot('foreground2');
+        hFigISI.axApply('default', @title, ...
+            sprintf('Units %s (coloured as in the waveform view)', ...
+                    strjoin(arrayfun(@num2str, selected, 'UniformOutput', 0), ', ')));
     end
 end
 
 function [isiK, isiK1] = getReturnMap(iCluster, hClust, hCfg)
-    %GETRETURNMAP subset 
+    %GETRETURNMAP subset
     clusterTimes = double(hClust.spikeTimes(hClust.spikesByCluster{iCluster}))/hCfg.sampleRate;
     if numel(clusterTimes) < 3
         isiK = 0;
@@ -67,12 +78,7 @@ function [isiK, isiK1] = getReturnMap(iCluster, hClust, hCfg)
     end
     clusterISI = diff(clusterTimes * 1000); % in msec
 
-    %isiK = clusterISIMs(1:end-1);
-    %isiK1 = clusterISIMs(2:end);
-    %subset = randperm(numel(isiK), min(hCfg.nShow, numel(isiK)));
     subset = randperm(numel(clusterISI) - 1, min(hCfg.nSpikesFigISI, numel(clusterISI) - 1));
-    %isiK = isiK(subset);
     isiK = clusterISI(subset);
-    %isiK1 = isiK1(subset);
     isiK1 = clusterISI(subset+1);
 end
