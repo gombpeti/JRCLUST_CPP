@@ -33,6 +33,13 @@ function hFigCorr = plotFigCorr(hFigCorr, hClust, hCfg, selected)
 
     nSel = numel(selected);
 
+    % Each unit's own colour, as the waveform view draws it, so a diagonal
+    % panel can be matched to its unit at a glance. Only the diagonal is
+    % coloured: those are the autocorrelograms and each belongs to exactly
+    % one unit. An off-diagonal panel belongs to a PAIR, so colouring it
+    % after either one would be misleading - it stays neutral.
+    colors = jrclust.views.selectionColors(selected, hClust.nClusters);
+
     % Spike times once per unit, in jitter bins.
     binned = cell(nSel, 1);
     for k = 1:nSel
@@ -87,6 +94,16 @@ function hFigCorr = plotFigCorr(hFigCorr, hClust, hCfg, selected)
             counts = correlogram(binned{r}, binned{c}, nLags, isAuto);
 
             hFigCorr.addPlot(['b' key], @bar, hAx, lagTime, counts, 1);
+
+            % The diagonal belongs to exactly one unit, so its bars take that
+            % unit's colour - the same one the waveform view uses. An
+            % off-diagonal panel belongs to a PAIR, so colouring it after
+            % either unit would be misleading; those stay neutral.
+            if isAuto
+                hFigCorr.plotApply(['b' key], @set, ...
+                                   'FaceColor', colors(r, :), ...
+                                   'EdgeColor', colors(r, :));
+            end
 
             hFigCorr.axApply(key, @set, 'XLim', jitterMs*[-nLags, nLags], ...
                              'YScale', 'log', 'FontSize', 7);

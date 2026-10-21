@@ -99,7 +99,21 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
         k = k + 1;
     end
 
-    for iSel = 1:nSel
+    % Draw the most numerous unit first and the sparsest last, so a small
+    % unit ends up ON TOP rather than buried.
+    %
+    % Without this a unit of 849 spikes is invisible beneath one of 123,332
+    % at the same marker size - it is drawn, but every point lands under the
+    % larger unit's scatter. Click order decides the plot keys, so the draw
+    % order has to be decided separately.
+    %
+    % Marker size also rises as the unit gets smaller, for the same reason:
+    % a few hundred points need to be seen against a hundred thousand.
+    counts = cellfun(@numel, selFeatures);
+    [~, drawOrder] = sort(counts, 'descend');
+
+    for k = 1:nSel
+        iSel = drawOrder(k);
         if iSel == 1
             key = 'foreground';
         elseif iSel == 2
@@ -107,11 +121,21 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
         else
             key = sprintf('foreground%d', iSel);
             if ~hFigTime.hasPlot(key)
-                hFigTime.addPlot(key, nan, nan, 'Marker', '.', 'LineStyle', 'none');
+                hFigTime.addPlot(key, @line, nan, nan, 'Marker', '.', ...
+                                 'MarkerSize', 5, 'LineStyle', 'none');
             end
         end
-        hFigTime.plotApply(key, @set, 'Color', selColors(iSel, :));
+
+        % rank 1 is the largest unit; later ranks are smaller and get bigger
+        % markers, capped so a tiny unit does not become a blob
+        mSize = min(5 + 2*(k - 1), 11);
+
+        hFigTime.plotApply(key, @set, 'Color', selColors(iSel, :), ...
+                           'MarkerSize', mSize);
         hFigTime.updatePlot(key, selTimes{iSel}, selFeatures{iSel});
+
+        % redraw on top of what is already there
+        hFigTime.plotApply(key, @uistack, 'top');
     end
     imrectSetPosition(hFigTime, 'hRect', timeLimits, vppLim);
 
