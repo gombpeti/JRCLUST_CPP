@@ -93,7 +93,7 @@ function jrc_relabel(prmFile, varargin)
                   'minSpikes', 30, 'marginFactor', 1.5, 'clearPrevious', true, ...
                   'rejudgeNoise', false, 'minHalfWidthMs', 0.06, ...
                   'maxShankCoverage', 0, 'loudSNR', 10, 'loudMaxSpikes', 1000, 'loudMinCrossings', 2, ...
-                  'maxCrossings', 12, 'maxSNR', 50, 'minTemplateScore', 0, ...
+                  'maxCrossings', 12, 'maxSNR', 50, 'minTemplateScore', 0, 'minPresence', 0.4, 'maxHalfWidthMs', 1.6, ...
                   'outputDir', '', 'dryRun', false);
     for k = 1:2:numel(varargin)
         name = varargin{k};
@@ -169,15 +169,19 @@ function jrc_relabel(prmFile, varargin)
     % ------------------------------------------------------------- measure
     % Group the spikes once rather than masking the full 17-million-element
     % vector per cluster, which would otherwise dominate the runtime.
-    byCluster = cell(nClusters, 1);
-    order = clu > 0;
+    byCluster = cell(nClusters, 1);   % spike TIMES, per cluster
+    idxByCluster = cell(nClusters, 1);% spike INDICES, for reading waveforms
+    order = find(clu > 0);
     [sortedClu, ix] = sort(clu(order));
     tt = t(order);
     tt = tt(ix);
+    origIdx = order(ix);
     edges = [0; find(diff(sortedClu)); numel(sortedClu)];
     for k = 1:numel(edges)-1
         c = sortedClu(edges(k)+1);
-        byCluster{c} = tt(edges(k)+1 : edges(k+1));
+        span = edges(k)+1 : edges(k+1);
+        byCluster{c}    = tt(span);
+        idxByCluster{c} = origIdx(span);
     end
 
     % --- shape, from the mean raw waveform -------------------------------
@@ -242,6 +246,42 @@ function jrc_relabel(prmFile, varargin)
     % minTemplateScore is set above 0, which it is NOT by default.
     [tmplScore, tmplOK, tmplWhy] = templateScores(res, nClusters, fs);
 
+    % --- presence: is the unit there for the whole recording? -------------
+    % presence_ratio (Allen Institute / SpikeInterface) is the fraction of
+    % time bins holding at least one spike. Taken literally it punishes
+    % sparse neurons - 24 spikes cannot fill 100 bins however evenly they
+    % fire - so what is used here is the observed presence against what a
+    % unit of that size would give if its spikes were spread uniformly:
+    % for n spikes over N bins, expected = 1-(1-1/N)^n. The ratio is near 1
+    % for anything spread over the recording whatever its rate, and small
+    % only when the spikes are genuinely clumped in time.
+    %
+    % This is an INDEPENDENT line of evidence from the waveform tests, which
+    % is what makes it worth having: eleven units judged noise by eye scored
+    % 0.07 to 0.38 while every large unit scored exactly 1.00, and none of
+    % that information comes from the shape.
+    presence = nan(nClusters, 1);
+    NBINS = 100;
+    presEdges = linspace(0, max(t), NBINS+1);
+
+    % --- trough width, measured on INDIVIDUAL spikes ----------------------
+    % Not on the mean waveform. A unit whose spikes are misaligned smears
+    % when averaged, so its mean is broad while every spike in it is sharp:
+    % measured here, three units of 25,000 to 49,000 spikes had mean widths
+    % of 1.40 to 1.50 ms and median SPIKE widths of 0.30 to 0.45 ms, with a
+    % trough jitter of about 11 samples. A ceiling on the mean would have
+    % condemned all three.
+    %
+    % On individual spikes the two populations separate cleanly: units
+    % confirmed by eye as neurons sit at 0.30 to 0.45 ms and ones confirmed
+    % as noise at 1.20 to 2.05, with nothing between.
+    spikeHalfW = nan(nClusters, 1);
+    rawFile = regexprep(resFile, '_res\.mat$', '_raw.jrc');
+    haveRaw = isfile(rawFile) && isfield(res, 'rawShape');
+    if haveRaw
+        rawMap = memmapfile(rawFile, 'Format', {'int16', double(res.rawShape), 'x'});
+    end
+
     nSpk = zeros(nClusters, 1);
     isiR = nan(nClusters, 1);
     zlR  = nan(nClusters, 1);
@@ -252,6 +292,20 @@ function jrc_relabel(prmFile, varargin)
         tk = sort(byCluster{c});
         nSpk(c) = numel(tk);
         if nSpk(c) < 2, continue; end
+
+        cnt = histcounts(tk, presEdges);
+        expd = 1 - (1 - 1/NBINS)^numel(tk);
+        presence(c) = mean(cnt > 0) / max(expd, eps);
+
+        if haveRaw
+            idx = idxByCluster{c};
+            if ~isempty(idx)
+                if numel(idx) > 400
+                    idx = idx(round(linspace(1, numel(idx), 400)));
+                end
+                spikeHalfW(c) = medianSpikeWidth(rawMap, idx, fs);
+            end
+        end
 
         isi = diff(tk) * 1000;                       % ms
         isiR(c) = sum(isi < opts.refractoryMs) / max(sum(isi <= 20), 1);
@@ -355,7 +409,43 @@ function jrc_relabel(prmFile, varargin)
     badTmpl = opts.minTemplateScore > 0 & tmplOK & ~tooFew & ...
               isfinite(tmplScore) & tmplScore < opts.minTemplateScore;
 
-    failed   = tooFew | badISI | badACG | badWidth | badShank | badLoud | badRing | badSNR | badTmpl;
+    % Present for only part of the recording. Deliberately NOT decisive, so
+    % it can only ever produce a 'review' flag.
+    %
+    % A unit confined to ten minutes of a 2.6 hour recording is usually an
+    % artifact that came and went, but it is also exactly what a real neuron
+    % looks like when drift carries it past the electrode - and that unit is
+    % worth keeping for the stretch where it existed. The evidence cannot
+    % distinguish the two, so the verdict should not pretend to.
+    badPresence = opts.minPresence > 0 & ~tooFew & ...
+                  isfinite(presence) & presence < opts.minPresence;
+
+    % Trough too WIDE to be an action potential.
+    %
+    % The default of 1.6 ms is far above what channel kinetics allow, and
+    % deliberately so. Two things force it up:
+    %
+    %   The measure saturates. A trough that never recovers past half depth
+    %   inside the window reports the full window length - 2.05 ms here at
+    %   41 samples and 20 kHz - which means "unmeasurable", not "2.05 ms
+    %   wide". Both of the units confirmed by eye as noise sit exactly
+    %   there.
+    %
+    %   Real units reach further than theory says. Across the 40 largest
+    %   units of a recording - the safest available proxy for "certainly a
+    %   neuron" - the median individual-spike width is 0.300 ms but the 95th
+    %   percentile is 1.100 and the maximum 1.525. A cut at 0.8, chosen from
+    %   the confirmed examples alone, condemned 519 units and 12% of all
+    %   spikes including one of 142,366 spikes.
+    %
+    % So the cut sits above the largest real unit observed (1.525) and below
+    % the saturated value, catching only troughs that never recover.
+    % Measured on individual spikes, never on the mean: see
+    % medianSpikeWidth for why.
+    badWide = opts.maxHalfWidthMs > 0 & ~tooFew & ...
+              isfinite(spikeHalfW) & spikeHalfW > opts.maxHalfWidthMs;
+
+    failed   = tooFew | badISI | badACG | badWidth | badShank | badLoud | badRing | badSNR | badTmpl | badPresence | badWide;
 
     % Separate units that fail decisively from units that fail by a hair.
     %
@@ -374,7 +464,7 @@ function jrc_relabel(prmFile, varargin)
     % A shape failure is decisive on its own. There is no "marginally one
     % sample wide": the trough either spans more than a couple of samples or
     % it does not, and a deflection on half a shank is not a near miss.
-    decisive = tooFew | badWidth | badShank | badLoud | badRing | badSNR | badTmpl | ...
+    decisive = tooFew | badWidth | badShank | badLoud | badRing | badSNR | badTmpl | badWide | ...
                (isiR > opts.marginFactor * opts.maxISIRatio) | ...
                (isfinite(zlR) & zlR > opts.marginFactor * opts.maxZeroLag);
 
@@ -395,6 +485,13 @@ function jrc_relabel(prmFile, varargin)
     fprintf('  large amplitude but almost silent  : %4d units\n', sum(badLoud));
     fprintf('  waveform rings instead of spiking  : %4d units\n', sum(badRing));
     fprintf('  amplitude beyond anything biologic : %4d units\n', sum(badSNR));
+    if opts.maxHalfWidthMs > 0
+        fprintf('  trough too wide to be a spike      : %4d units\n', sum(badWide));
+    end
+    if opts.minPresence > 0
+        fprintf('  present for only part of the run   : %4d units (review only)\n', ...
+                sum(badPresence));
+    end
     if opts.minTemplateScore > 0
         fprintf('  waveform unlike a spike (template) : %4d units\n', sum(badTmpl));
     end
@@ -601,6 +698,30 @@ function [score, ok, why] = templateScores(res, nClusters, fs)
         end
         score(c) = best;
     end
+end
+
+function h = medianSpikeWidth(map, idx, fs)
+    %MEDIANSPIKEWIDTH Median trough half-width over INDIVIDUAL spikes, in ms.
+    %
+    %   Measured per spike and then combined, rather than measured on the
+    %   mean, because a unit with jittered troughs smears when averaged and
+    %   its mean width then describes the jitter rather than the spikes.
+    h = NaN;
+    W = double(squeeze(map.Data.x(:, 1, idx)));
+    if isempty(W), return; end
+    if isvector(W), W = W(:); end
+    nS = size(W,1);
+    hw = nan(size(W,2), 1);
+    for k = 1:size(W,2)
+        w = W(:,k);
+        [tr, it] = min(w);
+        if tr >= 0, continue; end
+        half = tr/2;
+        L = it; while L > 1  && w(L-1) <= half, L = L - 1; end
+        R = it; while R < nS && w(R+1) <= half, R = R + 1; end
+        hw(k) = (R - L + 1) * 1000 / fs;
+    end
+    h = median(hw, 'omitnan');
 end
 
 function v = readVector(prmText, name)
