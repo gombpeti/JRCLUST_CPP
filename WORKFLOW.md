@@ -176,6 +176,36 @@ it back, or keep both.
 
 `'madFactor'` is the knob: 6 splits less, 3 splits more.
 
+### Look at units in Neuroscope
+
+```matlab
+jrc_export_neuroscope(prm, 'dryRun', true)   % show the spike groups, write nothing
+jrc_export_neuroscope(prm)
+```
+
+Splits a concatenated sort back into its recordings and writes, beside each
+entry of `rawRecordings`, the files ndManager would: `<dat name>.res.N`,
+`.clu.N`, `.spk.N` and `.fet.N` per spike group N. It rewrites the spike groups
+in that recording's `.xml` and lists the `.clu` files in its `.nrs`, so opening
+the `.dat` in Neuroscope loads every unit. Tick units in the cluster palette and
+choose waveform display to see their spikes on the traces. Both files are
+backed up first, and the anatomical groups are left alone.
+
+Neuroscope gives each channel to exactly one spike group and draws a unit on
+all channels of its group, so JRCLUST's overlapping neighbourhoods cannot be
+used as they are. Each shank is cut into contiguous groups of 8-24 sites at
+the places the fewest units spread across, judged from each unit's mean
+waveform, and every unit goes to the group holding its peak site. On rPEG007
+that is 31 groups, with no unit keeping less than half its signal in its own
+group. `'grouping', 'shank'` gives one group per shank instead.
+
+Unit ids stay JRCLUST's, and each unit keeps its `jrc manual` colour.
+Writing `.spk`/`.fet` reads every `.dat` once; `'klusters', false` skips them and
+finishes in seconds, which is all Neuroscope itself needs.
+
+JRCLUST numbers *sites* 1..512; the recording stores site `s` as channel
+`siteMap(s)`, and Neuroscope counts from 0, so the `.xml` gets `siteMap(s) - 1`.
+
 ### Repair derived data
 
 ```matlab
