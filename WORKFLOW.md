@@ -184,12 +184,12 @@ jrc_export_neuroscope(prm)
 ```
 
 Splits a concatenated sort back into its recordings and writes, beside each
-entry of `rawRecordings`, the files ndManager would: `<dat name>.res.N`,
-`.clu.N`, `.spk.N` and `.fet.N` per spike group N. It rewrites the spike groups
-in that recording's `.xml` and lists the `.clu` files in its `.nrs`, so opening
-the `.dat` in Neuroscope loads every unit. Tick units in the cluster palette and
-choose waveform display to see their spikes on the traces. Both files are
-backed up first, and the anatomical groups are left alone.
+entry of `rawRecordings`, `<dat name>.res.N` and `.clu.N` per spike group N.
+It rewrites the spike groups in that recording's `.xml`, lists the `.clu` files
+in its `.nrs` and switches on waveform display there (Units > Waveforms), so
+opening the `.dat` in Neuroscope loads every unit and a ticked unit's spikes are
+coloured on its channels. Both files are backed up first, and the anatomical
+groups are left alone. Takes seconds.
 
 Neuroscope gives each channel to exactly one spike group and draws a unit on
 all channels of its group, so JRCLUST's overlapping neighbourhoods cannot be
@@ -200,8 +200,8 @@ that is 31 groups, with no unit keeping less than half its signal in its own
 group. `'grouping', 'shank'` gives one group per shank instead.
 
 Unit ids stay JRCLUST's, and each unit keeps its `jrc manual` colour.
-Writing `.spk`/`.fet` reads every `.dat` once; `'klusters', false` skips them and
-finishes in seconds, which is all Neuroscope itself needs.
+`'klusters', true` also writes the `.spk.N`/`.fet.N` files Klusters needs; that
+reads every `.dat` once, about 5 minutes per 36 GB session.
 
 JRCLUST numbers *sites* 1..512; the recording stores site `s` as channel
 `siteMap(s)`, and Neuroscope counts from 0, so the `.xml` gets `siteMap(s) - 1`.

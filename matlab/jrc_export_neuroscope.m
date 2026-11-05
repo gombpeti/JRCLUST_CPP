@@ -2,10 +2,10 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %JRC_EXPORT_NEUROSCOPE Write a JRCLUST result as Neuroscope .res/.clu files.
 %
 %   Splits the sort back into its recordings and, next to each recording's
-%   Neuroscope .xml, writes per spike group N the same set of files ndManager
-%   produces - .res.N, .clu.N, .spk.N, .fet.N - and rewrites that .xml's
-%   spike groups so Neuroscope draws every unit's spikes, in the unit's own
-%   colour, on the channels around it.
+%   Neuroscope .xml, writes a .res.N / .clu.N pair per spike group N (and,
+%   with 'klusters', the .spk.N / .fet.N Klusters needs). It rewrites that
+%   .xml's spike groups so Neuroscope draws every unit's spikes, in the
+%   unit's own colour, on the channels around it.
 %
 %   jrc_export_neuroscope(prm)                  every recording in the .prm
 %   jrc_export_neuroscope                       asks for the .prm first
@@ -30,9 +30,9 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %     'includeNoise' also export spikes JRCLUST assigned to no unit, as
 %                    cluster 0 (default false)
 %     'klusters'     also write .spk.N and .fet.N, the waveform and feature
-%                    files Klusters needs (default true). Reads every .dat
-%                    once, front to back; false writes only .res/.clu/.xml,
-%                    which is all Neuroscope itself uses, in seconds.
+%                    files only Klusters needs (default false). Reads every
+%                    .dat once, front to back - minutes per session, where
+%                    Neuroscope's .res/.clu/.xml/.nrs take seconds.
 %     'highPass'     cutoff in Hz of the filter applied to .spk waveforms
 %                    (default 300)
 %     'spikeColors'  colour each spike group's channels in Neuroscope's
@@ -66,8 +66,9 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %   The .xml and .nrs are backed up next to themselves before they change.
 %   In the .xml only <spikeDetection>, <units> and, with 'spikeColors', the
 %   spikeColor of each channel are rewritten; the anatomical groups are left
-%   as they are. In the .nrs only the cluster-file entries of this export
-%   are replaced, each unit in its jrc manual colour; event files and
+%   as they are. In the .nrs the cluster-file entries of this export are
+%   replaced, each unit in its jrc manual colour, and waveform display
+%   (Units > Waveforms) is switched on; event files and the rest of the
 %   display settings are kept. Opening the .dat in Neuroscope then loads
 %   every .clu.N; tick units in the cluster palette to see their spikes.
 
@@ -80,7 +81,7 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
     opts = struct('grouping', 'jrclust', 'minSites', 8, 'maxSites', 24, ...
                   'xmlFiles', {{}}, 'ask', [], 'nrs', true, ...
                   'skipNotes', {{}}, 'includeNoise', false, ...
-                  'klusters', true, 'highPass', 300, ...
+                  'klusters', false, 'highPass', 300, ...
                   'spikeColors', true, 'outputDir', '', 'dryRun', false);
     for k = 1:2:numel(varargin)
         name = varargin{k};
@@ -207,8 +208,8 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
         fprintf('\nDry run: nothing written.\n');
     else
         fprintf(['\nDone. Open a session''s .dat in Neuroscope: its .clu files load with it.\n' ...
-                 'Tick units in the cluster palette and choose Display > Waveforms to see\n' ...
-                 'their spikes on the traces. Spike group N is .clu.N.\n']);
+                 'Tick units in the cluster palette to see their spikes coloured on the\n' ...
+                 'traces (Units > Waveforms). Spike group N is .clu.N.\n']);
     end
 end
 
@@ -649,8 +650,41 @@ function updateNrs(nrsFile, base, cluFiles, nClusters)
         end
     end
 
+    % Waveform presentation on in every display, so a ticked unit's spikes
+    % are coloured on its channels. Each <spikePresentation> is one mode that
+    % is on: 0 raster, 1 waveforms, 2 vertical lines. Neuroscope starts with
+    % only the raster, which draws the dots below the traces and nothing on
+    % them. Modes already on are kept.
+    displays = doc.getElementsByTagName('display');
+    nOn = 0;
+    for i = 0:displays.getLength() - 1
+        disp_ = displays.item(i);
+        kids = disp_.getChildNodes();
+        modes = {};
+        lastMode = [];
+        for j = 0:kids.getLength() - 1
+            k = kids.item(j);
+            if k.getNodeType() == k.ELEMENT_NODE && strcmp(char(k.getNodeName()), 'spikePresentation')
+                modes{end + 1} = strtrim(char(k.getTextContent())); %#ok<AGROW>
+                lastMode = k;
+            end
+        end
+        if ~ismember('1', modes)
+            el = doc.createElement('spikePresentation');
+            el.appendChild(doc.createTextNode('1'));
+            if isempty(lastMode)
+                disp_.appendChild(el);
+            else
+                disp_.insertBefore(el, lastMode.getNextSibling());
+            end
+            nOn = nOn + 1;
+        end
+    end
+
     xmlwrite(nrsFile, doc);
-    fprintf('  registered %d cluster files in %s\n', numel(cluFiles), nrsFile);
+    fprintf('  registered %d cluster files in %s', numel(cluFiles), nrsFile);
+    if nOn, fprintf(', waveform display switched on'); end
+    fprintf('\n');
     if ~wholeSeconds
         warning('jrc_export_neuroscope:modTime', ...
                 ['could not round the .clu modification times to whole seconds; ' ...
