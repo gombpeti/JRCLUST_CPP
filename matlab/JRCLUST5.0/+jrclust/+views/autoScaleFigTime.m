@@ -3,17 +3,25 @@ function autoScaleFigTime(hFigTime, hClust, selected, iSite, channel_idx)
     hCfg = hClust.hCfg;
     autoscalePct = hCfg.getOr('autoscalePct', 99.5)/100;
 
-    % get display features for figTime on iSite, compute the
-    % autoscalePct'th quantile, set ylimits to that scale
-    dispFeaturesTime = getFigTimeFeatures(hClust, iSite, selected(1),channel_idx);
-    if numel(dispFeaturesTime)<2 || ~any(dispFeaturesTime)
-        dispFeaturesTime = getFigTimeFeatures(hClust, iSite,[],channel_idx);
+    % compute the autoscalePct'th quantile of every selected unit's display
+    % features on iSite and set ylimits to the largest, so no unit is
+    % clipped. Only called right after plotFigTime, so the features are read
+    % back from the series it just drew rather than computed a second time.
+    nSel = numel(selected);
+    timeData = cell(1, nSel);
+    for iSel = 1:nSel
+        if iSel == 1
+            key = 'foreground';
+        else
+            key = sprintf('foreground%d', iSel);
+        end
+        yData = hFigTime.plotApply(key, @get, 'YData');
+        timeData{iSel} = yData(~isnan(yData));
     end
-    if numel(selected) == 1
-        timeData = {dispFeaturesTime};
-    else
-        dispFeaturesTime2 = getFigTimeFeatures(hClust, iSite, selected(2),channel_idx);
-        timeData = {dispFeaturesTime, dispFeaturesTime2};
+
+    dispFeaturesTime = timeData{1};
+    if numel(dispFeaturesTime)<2 || ~any(dispFeaturesTime)
+        timeData{1} = getFigTimeFeatures(hClust, iSite,[],channel_idx);
     end
 
     if all(cellfun(@isempty, timeData))

@@ -29,10 +29,8 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
            warning('Could not load trial times from %s.',hCfg.trialFile);
         end        
         
-        % first time
+        % first time; the selected-unit series are created per unit below
         hFigTime.addPlot('background', @line, nan, nan, 'Marker', '.', 'Color', hCfg.colorMap(1, :), 'MarkerSize', 5, 'LineStyle', 'none');
-        hFigTime.addPlot('foreground', @line, nan, nan, 'Marker', '.', 'Color', hCfg.colorMap(2, :), 'MarkerSize', 5, 'LineStyle', 'none');
-        hFigTime.addPlot('foreground2', @line, nan, nan, 'Marker', '.', 'Color', hCfg.colorMap(3, :), 'MarkerSize', 5, 'LineStyle', 'none');
         hFigTime.axApply('default', @xlabel, 'Time (s)');
         hFigTime.axApply('default', @grid, 'on');
 
@@ -45,10 +43,8 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
         % histogram
         hFigTime.addAxes('histogram');
         hFigTime.axApply('histogram', @set, 'Position', [0.93 0.2 0.06 0.7],'Visible','off'); 
-        hist_args = {@stairs, hFigTime.hAxes('histogram'), nan,nan,'LineWidth',1};
-        hFigTime.addPlot('background_hist', hist_args{:}, 'color', hCfg.colorMap(1, :));
-        hFigTime.addPlot('foreground_hist', hist_args{:}, 'color', hCfg.colorMap(2, :));
-        hFigTime.addPlot('foreground_hist2', hist_args{:}, 'color', hCfg.colorMap(3, :));
+        hFigTime.addPlot('background_hist', @stairs, hFigTime.hAxes('histogram'), nan, nan, ...
+                         'LineWidth', 1, 'color', hCfg.colorMap(1, :));
     end
     
     [bgFeatures, bgTimes] = getFigTimeFeatures(hClust, iSite); % plot background
@@ -68,13 +64,10 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
         [selFeatures{iSel}, selTimes{iSel}] = getFigTimeFeatures(hClust, iSite, selected(iSel));
     end
 
-    % Kept for the side histogram below, which still draws two series.
     if nSel >= 2
-        fgFeatures2 = selFeatures{2};
         figTitle = sprintf('Units %s, coloured as in the waveform view; (press [H] for help)', ...
                            strjoin(arrayfun(@num2str, selected, 'UniformOutput', 0), ', '));
     else
-        fgFeatures2 = [];
         figTitle = sprintf('Unit %d; (press [H] for help)', selected(1));
     end
 
@@ -91,13 +84,17 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
     %update scatter plots
     hFigTime.updatePlot('background', bgTimes, bgFeatures);
 
-    % Series beyond the first two are created on demand and removed when the
-    % selection shrinks, so a stale unit never lingers on the plot.
-    k = nSel + 1;
-    while hFigTime.hasPlot(sprintf('foreground%d', k))
-        hFigTime.rmPlot(sprintf('foreground%d', k));
-        k = k + 1;
-    end
+    % One scatter and one histogram series per selected unit: slot 1 is
+    % 'foreground' / 'foreground_hist' (splitPoly reads the primary unit from
+    % 'foreground'), slot k is 'foreground<k>' / 'foreground_hist<k>'. Series
+    % are created on demand, and every series for a slot beyond the current
+    % selection is removed so a deselected unit never lingers on the plot.
+    %
+    % The removal looks at every key the figure holds rather than walking
+    % upwards from nSel+1 until a key is missing: the walk stopped at the
+    % first gap, so after a single selection had removed 'foreground2', a
+    % later 'foreground3' was never found and stayed on screen.
+    removeStaleSlots(hFigTime, nSel);
 
     % Draw the most numerous unit first and the sparsest last, so a small
     % unit ends up ON TOP rather than buried.
@@ -114,16 +111,10 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
 
     for k = 1:nSel
         iSel = drawOrder(k);
-        if iSel == 1
-            key = 'foreground';
-        elseif iSel == 2
-            key = 'foreground2';
-        else
-            key = sprintf('foreground%d', iSel);
-            if ~hFigTime.hasPlot(key)
-                hFigTime.addPlot(key, @line, nan, nan, 'Marker', '.', ...
-                                 'MarkerSize', 5, 'LineStyle', 'none');
-            end
+        key = slotKey('foreground', iSel);
+        if ~hFigTime.hasPlot(key)
+            hFigTime.addPlot(key, @line, nan, nan, 'Marker', '.', ...
+                             'MarkerSize', 5, 'LineStyle', 'none');
         end
 
         % rank 1 is the largest unit; later ranks are smaller and get bigger
@@ -148,10 +139,15 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
     updateplotfun = @(tag,N,edges)hFigTime.updatePlot(tag,[0 N 0],[edges edges(end)+eps]); % feeding stairs the output of histcounts in this way exactly reproduces the output of matlab histogram, rotated on its side
     [N,edges] = histcountfun(bgFeatures);
     updateplotfun('background_hist',N,edges);
-    [N,edges] = histcountfun(fgFeatures);
-    updateplotfun('foreground_hist',N,edges);
-    [N,edges] = histcountfun(fgFeatures2);    
-    updateplotfun('foreground_hist2',N,edges);
+    for iSel = 1:nSel
+        key = slotKey('foreground_hist', iSel);
+        if ~hFigTime.hasPlot(key)
+            hFigTime.addPlot(key, @stairs, hFigTime.hAxes('histogram'), nan, nan, 'LineWidth', 1);
+        end
+        hFigTime.plotApply(key, @set, 'Color', selColors(iSel, :));
+        [N,edges] = histcountfun(selFeatures{iSel});
+        updateplotfun(key,N,edges);
+    end
 
 
 %     if isfield(S_fig, 'vhAx_track')
@@ -166,6 +162,26 @@ function hFigTime = plotFigTime(hFigTime, hClust, hCfg, selected, maxAmp, iSite,
     hFigTime.axApply('default', @axis, [timeLimits, vppLim]);
     hFigTime.axApply('default', @title, figTitle);
     hFigTime.axApply('default', @ylabel, YLabel);
+end
+
+function key = slotKey(prefix, iSel)
+    %SLOTKEY Plot key of selection slot iSel: 'prefix' for 1, 'prefix<k>' after
+    if iSel == 1
+        key = prefix;
+    else
+        key = sprintf('%s%d', prefix, iSel);
+    end
+end
+
+function removeStaleSlots(hFigTime, nSel)
+    %REMOVESTALESLOTS Delete scatter and histogram series of slots > nSel
+    plotKeys = keys(hFigTime.hPlots);
+    for i = 1:numel(plotKeys)
+        tok = regexp(plotKeys{i}, '^foreground(?:_hist)?(\d+)$', 'tokens', 'once');
+        if ~isempty(tok) && str2double(tok{1}) > nSel
+            hFigTime.rmPlot(plotKeys{i});
+        end
+    end
 end
 
 function hRect = createTimeRangeROI(hAx, rectPos, timeLimits, hCfg)
