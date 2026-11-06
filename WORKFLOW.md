@@ -199,7 +199,10 @@ the `.prm` - 2-3 channels at ~95 µm pitch, up to 12 on a 16 µm shank.
 Neuroscope gives each channel to one spike group, and those windows overlap
 between units, so every channel is its own spike group and a unit is written
 into the `.clu` of each channel in its window: in the cluster palette a unit
-is listed once per channel. `'radiusUm'` changes the window;
+is listed once per channel. Nothing is drawn on the `.prm`'s `ignoreSites`
+(never sorted) or on the channels a session's `.xml` marks `skip="1"` - those
+channels are in no spike group, and a unit whose whole window is skipped is
+left out of that session. `'radiusUm'` changes the window;
 `'grouping', 'jrclust'` instead cuts each shank into contiguous groups of 8-24
 sites, one group per unit.
 

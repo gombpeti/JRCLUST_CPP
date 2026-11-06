@@ -29,6 +29,9 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %                    By default it prompts only when the .xml is missing.
 %     'nrs'          register the .clu files in each session's .nrs, so
 %                    Neuroscope opens them with the .dat (default true)
+%     'useXmlSkip'   also keep units off the channels each session's .xml
+%                    marks skip="1" (default true). The .prm's ignoreSites
+%                    are always kept clear: they were never sorted.
 %     'selectUnits'  'all' (default): every unit starts selected, so its
 %                    spikes are coloured as soon as the .dat opens;
 %                    'none': tick them in the cluster palette yourself
@@ -100,7 +103,7 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 
     opts = struct('grouping', 'radius', 'radiusUm', 100, 'minSites', 8, 'maxSites', 24, ...
                   'xmlFiles', {{}}, 'ask', [], 'nrs', true, ...
-                  'selectUnits', 'all', 'raster', false, ...
+                  'selectUnits', 'all', 'raster', false, 'useXmlSkip', true, ...
                   'skipNotes', {{}}, 'includeNoise', false, ...
                   'klusters', false, 'highPass', 300, ...
                   'spikeColors', true, 'outputDir', '', 'dryRun', false, ...
@@ -134,6 +137,7 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
     res = load(resFile, want{ismember(want, have)});
 
     siteMap = double(hCfg.siteMap(:));
+    ignoredSites = double(hCfg.ignoreSites(:));          % site indices, never sorted
     shank = double(hCfg.shankMap(:));
     siteLoc = double(hCfg.siteLoc);
     nClusters = double(max(res.spikeClusters));
@@ -235,21 +239,47 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
                      'same name and folder as the .dat it opens'], base, xmlFiles{r});
         end
         checkXml(xmlFiles{r}, hCfg, siteMap);
+
+        % Channels nothing is drawn on in this session: the .prm's ignored
+        % sites, which were never sorted, and the channels this session's
+        % .xml marks skip="1" (dead or noisy in this recording). They leave
+        % every spike group, so no unit's window reaches them.
+        excluded = ignoredSites;
+        nFromXml = 0;
+        if opts.useXmlSkip
+            fromXml = find(ismember(siteMap - 1, xmlSkippedChannels(xmlFiles{r})));
+            nFromXml = numel(setdiff(fromXml, excluded));
+            excluded = union(excluded, fromXml);
+        end
+        [sGroups, sUnitGroups, sUnitGroup, sUnits, emptyGroups] = ...
+            excludeSites(groups, unitGroups, unitGroup, units, excluded);
+        lost = setdiff(units, sUnits);
+        fprintf(['  %d channels left out: %d ignored in the .prm, %d more skipped in this .xml; ' ...
+                 '%d unit-channel pairs dropped'], numel(excluded), numel(ignoredSites), nFromXml, ...
+                sum(cellfun(@numel, unitGroups(units))) - sum(cellfun(@numel, sUnitGroups(sUnits))));
+        if ~isempty(lost)
+            fprintf('; %d units have no channel left and are not shown: %s', numel(lost), compactList(lost));
+        end
+        fprintf('\n');
         if opts.dryRun, continue; end
 
         % one entry per (spike, group it is drawn in): a unit's spike is
-        % written into the .clu/.res of every group in unitGroups
-        [idx, spikeGroup] = expandToGroups(find(inRec), clu, unitGroups, siteGroup, res);
+        % written into the .clu/.res of every group in sUnitGroups
+        [idx, spikeGroup] = expandToGroups(find(inRec & ~ismember(clu, lost)), clu, ...
+                                           sUnitGroups, siteGroup, res);
+        keep = ~ismember(spikeGroup, emptyGroups);       % unsorted spikes on excluded sites
+        idx = idx(keep);
+        spikeGroup = spikeGroup(keep);
         localTimes = spikeTimes(idx) - 1 - offsets(r);
         written = writeResClu(xmlDir, base, nGroups, spikeGroup, localTimes, clu(idx));
         if opts.klusters
             [nS, peak] = spikeWindow(xmlFiles{r});
             written = [written, writeSpkFet(recs{r}, hCfg, nSamples(r), xmlDir, base, ...
-                                            groups, spikeGroup, localTimes, nS, peak, ...
+                                            sGroups, spikeGroup, localTimes, nS, peak, ...
                                             opts.highPass)]; %#ok<AGROW>
         end
         removeStale(xmlDir, base, written);
-        updateXml(xmlFiles{r}, groups, units, unitGroup, notes, nPerUnit, res, ...
+        updateXml(xmlFiles{r}, sGroups, sUnits, sUnitGroup, notes, nPerUnit, res, ...
                   clusterSites, siteMap, opts.spikeColors);
         if opts.nrs
             cluFiles = written(~cellfun(@isempty, regexp(written, '\.clu\.\d+$', 'once')));
@@ -275,6 +305,49 @@ function tf = neuroscopeRunning()
     else
         [status, ~] = system('pgrep -xi neuroscope');
         tf = status == 0;
+    end
+end
+
+% =====================================================================
+function ch = xmlSkippedChannels(xmlFile)
+    %XMLSKIPPEDCHANNELS 0-based channels an .xml's anatomical groups mark skip="1"
+    doc = xmlread(xmlFile);
+    nodes = doc.getElementsByTagName('channel');
+    ch = [];
+    for i = 0:nodes.getLength() - 1
+        n = nodes.item(i);
+        if strcmp(char(n.getAttribute('skip')), '1')
+            ch(end + 1) = str2double(char(n.getTextContent())); %#ok<AGROW>
+        end
+    end
+end
+
+function [groups, unitGroups, unitGroup, units, emptyGroups] = ...
+        excludeSites(groups, unitGroups, unitGroup, units, excluded)
+    %EXCLUDESITES Take sites out of every spike group, and units out of
+    %   groups left empty
+    %
+    %   A group keeps its number, so .clu.N means the same channel in every
+    %   session; with 'radius' an excluded channel's group is simply empty.
+    %   A unit whose peak group is gone keeps its first remaining group as
+    %   its home in <units>; one with none left is dropped for the session.
+    for g = 1:numel(groups)
+        keep = ~ismember(groups(g).sites, excluded);
+        groups(g).sites = groups(g).sites(keep);
+        groups(g).channels = groups(g).channels(keep);
+    end
+    emptyGroups = find(arrayfun(@(g) isempty(g.sites), groups));
+    for u = units(:)'
+        unitGroups{u} = unitGroups{u}(~ismember(unitGroups{u}, emptyGroups));
+        if isempty(unitGroups{u})
+            unitGroup(u) = 0;
+        elseif ~ismember(unitGroup(u), unitGroups{u})
+            unitGroup(u) = unitGroups{u}(1);
+        end
+    end
+    units = units(unitGroup(units) > 0);
+    for g = 1:numel(groups)
+        groups(g).units = units(cellfun(@(c) any(c == g), unitGroups(units)))';
     end
 end
 
