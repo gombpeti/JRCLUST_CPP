@@ -39,6 +39,8 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %                    spike-group palette (default true)
 %     'outputDir'    where the _res.mat is, if the .prm's outputDir is stale
 %     'dryRun'       compute and report, write nothing (default false)
+%     'checkNeuroscope'  refuse to run while Neuroscope is open (default
+%                    true): it writes its own .xml/.nrs back when it closes
 %
 %   CHANNELS. JRCLUST numbers sites 1..nSites - spikeSites, clusterSites,
 %   siteNeighbors, shankMap and siteLoc all index sites. The recording stores
@@ -82,7 +84,8 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
                   'xmlFiles', {{}}, 'ask', [], 'nrs', true, ...
                   'skipNotes', {{}}, 'includeNoise', false, ...
                   'klusters', false, 'highPass', 300, ...
-                  'spikeColors', true, 'outputDir', '', 'dryRun', false);
+                  'spikeColors', true, 'outputDir', '', 'dryRun', false, ...
+                  'checkNeuroscope', true);
     for k = 1:2:numel(varargin)
         name = varargin{k};
         if ~isfield(opts, name)
@@ -91,6 +94,16 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
         opts.(name) = varargin{k+1};
     end
     if ischar(opts.skipNotes), opts.skipNotes = {opts.skipNotes}; end
+
+    % Neuroscope keeps a session's .xml and .nrs in memory and writes both
+    % back when it saves or closes, so a session open during the export
+    % silently loses the new spike groups and display settings afterwards.
+    if ~opts.dryRun && opts.checkNeuroscope && neuroscopeRunning()
+        error('jrc_export_neuroscope:neuroscopeOpen', ...
+              ['Neuroscope is running. Close every Neuroscope window first: on closing it ' ...
+               'writes its own copy of the .xml and .nrs over the export. ' ...
+               '(''checkNeuroscope'', false skips this check.)']);
+    end
 
     % ------------------------------------------------------------ load --
     hCfg = jrclust.Config(prmFile);
@@ -210,6 +223,17 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
         fprintf(['\nDone. Open a session''s .dat in Neuroscope: its .clu files load with it.\n' ...
                  'Tick units in the cluster palette to see their spikes coloured on the\n' ...
                  'traces (Units > Waveforms). Spike group N is .clu.N.\n']);
+    end
+end
+
+% =====================================================================
+function tf = neuroscopeRunning()
+    if ispc
+        [~, out] = system('tasklist /FI "IMAGENAME eq neuroscope.exe" /NH');
+        tf = contains(lower(out), 'neuroscope.exe');
+    else
+        [status, ~] = system('pgrep -xi neuroscope');
+        tf = status == 0;
     end
 end
 
