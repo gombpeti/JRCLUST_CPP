@@ -16,7 +16,11 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %   named after it - <folder>\<dat name>.xml/.nrs/.res.N/.clu.N/.spk.N/.fet.N.
 %
 %   Options
-%     'grouping'     'jrclust' (default) | 'shank' | a number of sites per block
+%     'grouping'     'radius' (default) | 'jrclust' | 'shank' | a number of
+%                    sites per block - see SPIKE GROUPS
+%     'radiusUm'     for 'radius': a unit is drawn on every channel of its
+%                    shank at most this far above or below its peak site,
+%                    by siteLoc in the .prm (default 100)
 %     'minSites'     smallest group for 'jrclust' grouping (default 8)
 %     'maxSites'     largest group for 'jrclust' grouping (default 24)
 %     'xmlFiles'     cell array, one .xml per entry of rawRecordings, to use
@@ -25,6 +29,12 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %                    By default it prompts only when the .xml is missing.
 %     'nrs'          register the .clu files in each session's .nrs, so
 %                    Neuroscope opens them with the .dat (default true)
+%     'selectUnits'  'all' (default): every unit starts selected, so its
+%                    spikes are coloured as soon as the .dat opens;
+%                    'none': tick them in the cluster palette yourself
+%     'raster'       also keep Neuroscope's raster below the traces
+%                    (default false; with every unit selected it has a row
+%                    per unit and channel file)
 %     'skipNotes'    units annotated with any of these are left out,
 %                    e.g. {'to_delete'} (default {}: export every unit)
 %     'includeNoise' also export spikes JRCLUST assigned to no unit, as
@@ -49,17 +59,24 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %   numbering as the existing anatomical groups.
 %
 %   SPIKE GROUPS. Neuroscope gives each channel to exactly one spike group,
-%   and draws a unit's spikes on all channels of the group whose .clu file
-%   holds it. JRCLUST's neighbourhoods (nSiteDir sites either side of a
-%   unit's peak) overlap, so they cannot be spike groups themselves. Instead
-%   each shank is cut into contiguous blocks of neighbouring sites, the cuts
-%   placed where the fewest units spread across them - judged from each
-%   unit's mean waveform on its neighbourhood - and each unit goes to the
-%   block holding its peak site.
+%   and draws a unit's spikes on a channel only if the .clu file of that
+%   channel's group holds the unit.
+%
+%   'radius' (default) makes every channel its own spike group and writes
+%   each unit into the .clu.N of every channel of its shank within radiusUm
+%   above or below its peak site - the site where its amplitude is largest
+%   (clusterSites). How many channels that is follows from the probe
+%   geometry in the .prm: 2-3 at ~100 um pitch, ~13 at 15.5 um. Every unit
+%   is centred on its peak, and nothing is drawn on channels too far away
+%   to see it. A unit therefore appears in several .clu files - once per
+%   channel - and is ticked per channel in the cluster palette.
+%
+%   'jrclust' cuts each shank into contiguous blocks of neighbouring sites
+%   instead, placed where the fewest units' mean waveforms spread across a
+%   boundary, and puts each unit in the one block holding its peak site.
 %
 %   CLUSTER IDS are JRCLUST's unit numbers, unchanged, so unit 57 in
-%   Neuroscope is unit 57 in jrc manual. Each .clu file holds only the units
-%   of its group.
+%   Neuroscope is unit 57 in jrc manual, in every .clu file it appears in.
 %
 %   TIMES. A concatenated sort numbers samples continuously across all
 %   rawRecordings, from 1. Each .res holds 0-based sample numbers within its
@@ -69,10 +86,11 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
 %   In the .xml only <spikeDetection>, <units> and, with 'spikeColors', the
 %   spikeColor of each channel are rewritten; the anatomical groups are left
 %   as they are. In the .nrs the cluster-file entries of this export are
-%   replaced, each unit in its jrc manual colour, and waveform display
-%   (Units > Waveforms) is switched on; event files and the rest of the
-%   display settings are kept. Opening the .dat in Neuroscope then loads
-%   every .clu.N; tick units in the cluster palette to see their spikes.
+%   replaced, each unit in its jrc manual colour; every display gets
+%   waveform display (Units > Waveforms) and, with 'selectUnits' 'all',
+%   every unit selected. Event files and the rest of the display settings
+%   are kept. Opening the .dat in Neuroscope then shows each unit's spikes
+%   coloured on the channels around its peak.
 
     if nargin < 1 || isempty(prmFile)
         [f, p] = uigetfile('*.prm', 'JRCLUST parameter file');
@@ -80,8 +98,9 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
         prmFile = fullfile(p, f);
     end
 
-    opts = struct('grouping', 'jrclust', 'minSites', 8, 'maxSites', 24, ...
+    opts = struct('grouping', 'radius', 'radiusUm', 100, 'minSites', 8, 'maxSites', 24, ...
                   'xmlFiles', {{}}, 'ask', [], 'nrs', true, ...
+                  'selectUnits', 'all', 'raster', false, ...
                   'skipNotes', {{}}, 'includeNoise', false, ...
                   'klusters', false, 'highPass', 300, ...
                   'spikeColors', true, 'outputDir', '', 'dryRun', false, ...
@@ -136,17 +155,38 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
     end
 
     % ---------------------------------------------------- spike groups --
-    siteGroup = buildGroups(opts, res, hCfg, shank, siteLoc, clusterSites, units);
+    [siteGroup, mode] = buildGroups(opts, res, hCfg, shank, siteLoc, clusterSites, units);
     nGroups = max(siteGroup);
     groupSites = arrayfun(@(g) orderSites(find(siteGroup == g), siteLoc), 1:nGroups, ...
                           'UniformOutput', false);
+
+    % unitGroup: the group of a unit's peak site. unitGroups: every group the
+    % unit is drawn on - with 'radius', the group of each site of its shank
+    % within radiusUm above or below its peak site; otherwise just its own.
     unitGroup = zeros(nClusters, 1);
     unitGroup(units) = siteGroup(clusterSites(units));
+    unitGroups = cell(nClusters, 1);
+    for u = units(:)'
+        p = clusterSites(u);
+        if strcmp(mode, 'radius')
+            near = shank == shank(p) & abs(siteLoc(:, 2) - siteLoc(p, 2)) <= opts.radiusUm;
+            unitGroups{u} = unique(siteGroup(near));
+        else
+            unitGroups{u} = unitGroup(u);
+        end
+    end
 
-    reportGroups(groupSites, shank, siteMap, unitGroup, units, res, clusterSites, siteGroup);
+    reportGroups(mode, opts, groupSites, shank, siteLoc, siteMap, unitGroups, units, res, siteGroup);
+    if strcmp(mode, 'radius')
+        colorKey = num2cell(cellfun(@(s) shank(s(1)), groupSites));   % colour by shank
+    else
+        colorKey = num2cell(1:nGroups);
+    end
     groups = struct('sites', groupSites, ...
                     'channels', cellfun(@(s) siteMap(s)' - 1, groupSites, 'UniformOutput', false), ...
-                    'units', arrayfun(@(g) units(unitGroup(units) == g)', 1:nGroups, 'UniformOutput', false));
+                    'units', arrayfun(@(g) units(cellfun(@(c) any(c == g), unitGroups(units)))', ...
+                                      1:nGroups, 'UniformOutput', false), ...
+                    'colorKey', colorKey);
 
     % ------------------------------------------------ recordings & times --
     recs = cellstr(hCfg.rawRecordings);
@@ -172,12 +212,9 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
     % which spikes go out, and with what cluster id
     out = ismember(spikeClusters, units);
     clu = spikeClusters;
-    spikeGroup = zeros(size(clu));
-    spikeGroup(out) = unitGroup(spikeClusters(out));
     if opts.includeNoise
         noise = spikeClusters <= 0;
         clu(noise) = 0;
-        spikeGroup(noise) = siteGroup(double(res.spikeSites(noise)));
         out = out | noise;
     end
 
@@ -200,12 +237,15 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
         checkXml(xmlFiles{r}, hCfg, siteMap);
         if opts.dryRun, continue; end
 
-        localTimes = spikeTimes(inRec) - 1 - offsets(r);
-        written = writeResClu(xmlDir, base, nGroups, spikeGroup(inRec), localTimes, clu(inRec));
+        % one entry per (spike, group it is drawn in): a unit's spike is
+        % written into the .clu/.res of every group in unitGroups
+        [idx, spikeGroup] = expandToGroups(find(inRec), clu, unitGroups, siteGroup, res);
+        localTimes = spikeTimes(idx) - 1 - offsets(r);
+        written = writeResClu(xmlDir, base, nGroups, spikeGroup, localTimes, clu(idx));
         if opts.klusters
             [nS, peak] = spikeWindow(xmlFiles{r});
             written = [written, writeSpkFet(recs{r}, hCfg, nSamples(r), xmlDir, base, ...
-                                            groups, spikeGroup(inRec), localTimes, nS, peak, ...
+                                            groups, spikeGroup, localTimes, nS, peak, ...
                                             opts.highPass)]; %#ok<AGROW>
         end
         removeStale(xmlDir, base, written);
@@ -213,16 +253,17 @@ function groups = jrc_export_neuroscope(prmFile, varargin)
                   clusterSites, siteMap, opts.spikeColors);
         if opts.nrs
             cluFiles = written(~cellfun(@isempty, regexp(written, '\.clu\.\d+$', 'once')));
-            updateNrs(fullfile(xmlDir, [base '.nrs']), base, cluFiles, nClusters);
+            updateNrs(fullfile(xmlDir, [base '.nrs']), base, cluFiles, nClusters, ...
+                      strcmpi(opts.selectUnits, 'all'), opts.raster);
         end
     end
 
     if opts.dryRun
         fprintf('\nDry run: nothing written.\n');
     else
-        fprintf(['\nDone. Open a session''s .dat in Neuroscope: its .clu files load with it.\n' ...
-                 'Tick units in the cluster palette to see their spikes coloured on the\n' ...
-                 'traces (Units > Waveforms). Spike group N is .clu.N.\n']);
+        fprintf(['\nDone. Open a session''s .dat in Neuroscope: its .clu files load with it,\n' ...
+                 'each unit''s spikes coloured on the channels around its peak\n' ...
+                 '(Units > Waveforms; untick units in the cluster palette to hide them).\n']);
     end
 end
 
@@ -238,8 +279,42 @@ function tf = neuroscopeRunning()
 end
 
 % =====================================================================
-function siteGroup = buildGroups(opts, res, hCfg, shank, siteLoc, clusterSites, units)
+function [idx, group] = expandToGroups(spikes, clu, unitGroups, siteGroup, res)
+    %EXPANDTOGROUPS One entry per spike and spike group it is drawn in
+    %
+    %   A unit's spikes go into every group in unitGroups{unit}; spikes of
+    %   no unit (cluster 0, with 'includeNoise') into the group of the site
+    %   they were detected on. Entries come unit by unit; writeResClu and
+    %   writeSpkFet both sort by time, stably, so they agree on the order.
+    c = clu(spikes);
+    [cs, o] = sort(c);
+    spikes = spikes(o);
+    edges = [0; find(diff(cs)); numel(cs)];
+    idxParts = cell(numel(edges) - 1, 1);
+    grpParts = idxParts;
+    for k = 1:numel(edges) - 1
+        s = spikes(edges(k) + 1:edges(k + 1));
+        u = cs(edges(k) + 1);
+        if u <= 0
+            g = siteGroup(double(res.spikeSites(s)));
+            idxParts{k} = s;
+            grpParts{k} = g(:);
+        else
+            g = unitGroups{u}(:)';
+            idxParts{k} = repmat(s, numel(g), 1);
+            grpParts{k} = repelem(g(:), numel(s), 1);       % column even for one group
+        end
+    end
+    idx = vertcat(idxParts{:});
+    group = vertcat(grpParts{:});
+end
+
+% =====================================================================
+function [siteGroup, mode] = buildGroups(opts, res, hCfg, shank, siteLoc, clusterSites, units)
     %BUILDGROUPS Assign every site to one spike group, contiguous along a shank
+    %
+    %   'radius' gives every site its own group; which of them a unit is
+    %   drawn on is decided per unit afterwards, from the probe geometry.
     nSites = numel(shank);
     siteGroup = zeros(nSites, 1);
 
@@ -251,12 +326,13 @@ function siteGroup = buildGroups(opts, res, hCfg, shank, siteLoc, clusterSites, 
     end
     fprintf('Spike groups: %s', mode);
     switch mode
+        case 'radius',  fprintf(' (one per channel; each unit on every channel of its shank within %g um above or below its peak site)\n', opts.radiusUm);
         case 'jrclust', fprintf(' (%d..%d sites)\n', opts.minSites, opts.maxSites);
         case 'block',   fprintf(' of %d sites\n', blockSize);
         case 'shank',   fprintf(' (one per shank)\n');
         otherwise
             error('jrc_export_neuroscope:badGrouping', ...
-                  'grouping must be ''jrclust'', ''shank'' or a number of sites');
+                  'grouping must be ''radius'', ''jrclust'', ''shank'' or a number of sites');
     end
 
     if strcmp(mode, 'jrclust')
@@ -268,6 +344,8 @@ function siteGroup = buildGroups(opts, res, hCfg, shank, siteLoc, clusterSites, 
         idx = orderSites(find(shank == sh), siteLoc);
         n = numel(idx);
         switch mode
+            case 'radius'
+                segs = [(1:n)' (1:n)'];
             case 'shank'
                 segs = [1 n];
             case 'block'
@@ -353,29 +431,41 @@ function idx = orderSites(idx, siteLoc)
     idx = idx(o);
 end
 
-function reportGroups(groupSites, shank, siteMap, unitGroup, units, res, clusterSites, siteGroup)
+function reportGroups(mode, opts, groupSites, shank, siteLoc, siteMap, unitGroups, units, res, siteGroup)
     nGroups = numel(groupSites);
     fprintf('  %d spike groups\n', nGroups);
-    fprintf('  group  shank  sites  channels (0-based)            units\n');
-    for g = 1:nGroups
-        s = groupSites{g};
-        ch = siteMap(s) - 1;
-        chText = sprintf('%d ', ch(1:min(5, end)));
-        if numel(ch) > 5, chText = [chText '...']; end %#ok<AGROW>
-        fprintf('  %5d  %5d  %5d  %-30s %5d\n', g, shank(s(1)), numel(s), chText, ...
-                sum(unitGroup(units) == g));
+    nUnitsIn = arrayfun(@(g) sum(cellfun(@(c) any(c == g), unitGroups(units))), 1:nGroups);
+    if strcmp(mode, 'radius')
+        % one group per channel: summarise rather than list 512 rows
+        nCh = cellfun(@numel, unitGroups(units));
+        fprintf('  each unit is drawn on %d..%d channels (median %g) within %g um of its peak site\n', ...
+                min(nCh), max(nCh), median(nCh), opts.radiusUm);
+        fprintf('  %d channels show at least one unit; the busiest shows %d units\n', ...
+                sum(nUnitsIn > 0), max(nUnitsIn));
+        pitch = arrayfun(@(sh) median(diff(unique(siteLoc(shank == sh, 2)))), unique(shank)');
+        fprintf('  vertical distance between neighbouring depths, per shank (median): %s um\n', ...
+                mat2str(round(pitch, 1)));
+    else
+        fprintf('  group  shank  sites  channels (0-based)            units\n');
+        for g = 1:nGroups
+            s = groupSites{g};
+            ch = siteMap(s) - 1;
+            chText = sprintf('%d ', ch(1:min(5, end)));
+            if numel(ch) > 5, chText = [chText '...']; end %#ok<AGROW>
+            fprintf('  %5d  %5d  %5d  %-30s %5d\n', g, shank(s(1)), numel(s), chText, nUnitsIn(g));
+        end
     end
 
-    % how much of each unit's own neighbourhood its group covers
+    % how much of each unit's own neighbourhood the channels it is drawn on cover
     if isfield(res, 'meanWfGlobal') && size(res.meanWfGlobal, 3) >= max(units)
         kept = zeros(numel(units), 1);
         for k = 1:numel(units)
             u = units(k);
             wf = double(res.meanWfGlobal(:, :, u));
             e = (max(wf, [], 1) - min(wf, [], 1)).^2;
-            kept(k) = sum(e(siteGroup == siteGroup(clusterSites(u)))) / max(sum(e), eps);
+            kept(k) = sum(e(ismember(siteGroup, unitGroups{u}))) / max(sum(e), eps);
         end
-        fprintf(['  share of each unit''s signal inside its own group: median %.2f; ' ...
+        fprintf(['  share of each unit''s signal on the channels it is drawn on: median %.2f; ' ...
                  '%d units below 0.8, %d below 0.5\n'], median(kept), sum(kept < 0.8), sum(kept < 0.5));
     end
 end
@@ -608,7 +698,15 @@ function written = writeSpkFet(datFile, hCfg, nFrames, dirName, base, groups, ..
     fprintf('  .fet: %d groups, 3 PCs per channel\n', sum(has));
 end
 
-function updateNrs(nrsFile, base, cluFiles, nClusters)
+function insertAt(parent, el, anchor)
+    if isempty(anchor)
+        parent.appendChild(el);
+    else
+        parent.insertBefore(el, anchor);
+    end
+end
+
+function updateNrs(nrsFile, base, cluFiles, nClusters, selectAll, raster)
     %UPDATENRS List this export's .clu files in the Neuroscope session file
     %
     %   Neuroscope loads every cluster file a session lists when the .dat is
@@ -647,6 +745,8 @@ function updateNrs(nrsFile, base, cluFiles, nClusters)
 
     wholeSeconds = truncateModTimes(cluFiles);
     colors = lines(max(nClusters, 1));
+    urls = strrep(cluFiles, '\', '/');
+    fileIds = cell(size(cluFiles));
     for i = 1:numel(cluFiles)
         f = cluFiles{i};
         d = dir(f);
@@ -656,10 +756,11 @@ function updateNrs(nrsFile, base, cluFiles, nClusters)
         fgetl(fid);
         ids = unique(fscanf(fid, '%d'));
         fclose(fid);
+        fileIds{i} = ids;
 
         entry = add(doc, files, 'file');
         add(doc, entry, 'type', '0');
-        add(doc, entry, 'url', strrep(f, '\', '/'));
+        add(doc, entry, 'url', urls{i});
         add(doc, entry, 'modificationDate', stamp);
         items = add(doc, entry, 'items');
         for id = ids'
@@ -674,40 +775,59 @@ function updateNrs(nrsFile, base, cluFiles, nClusters)
         end
     end
 
-    % Waveform presentation on in every display, so a ticked unit's spikes
-    % are coloured on its channels. Each <spikePresentation> is one mode that
-    % is on: 0 raster, 1 waveforms, 2 vertical lines. Neuroscope starts with
-    % only the raster, which draws the dots below the traces and nothing on
-    % them. Modes already on are kept.
+    % Every display: spikes drawn as waveforms on the traces, and the units
+    % of this export selected, as in an ndManager session.
+    %
+    % Each <spikePresentation> is one mode that is on: 0 raster, 1 waveforms
+    % (coloured on the traces), 2 vertical lines. Neuroscope starts with only
+    % the raster. With every unit selected the raster would hold a row per
+    % unit and channel file - thousands - so it is on only with 'raster'.
+    %
+    % Selections are stored per .clu file; those of an earlier export point
+    % at files whose contents have changed, so they are replaced.
+    modes = {'1'};
+    if raster, modes{end + 1} = '0'; end
     displays = doc.getElementsByTagName('display');
-    nOn = 0;
     for i = 0:displays.getLength() - 1
         disp_ = displays.item(i);
         kids = disp_.getChildNodes();
-        modes = {};
-        lastMode = [];
-        for j = 0:kids.getLength() - 1
+        anchor = [];
+        for j = kids.getLength() - 1:-1:0
             k = kids.item(j);
-            if k.getNodeType() == k.ELEMENT_NODE && strcmp(char(k.getNodeName()), 'spikePresentation')
-                modes{end + 1} = strtrim(char(k.getTextContent())); %#ok<AGROW>
-                lastMode = k;
+            if k.getNodeType() ~= k.ELEMENT_NODE, continue; end
+            tag = char(k.getNodeName());
+            if strcmp(tag, 'spikePresentation')
+                anchor = k.getNextSibling();
+                disp_.removeChild(k);
+            elseif any(strcmp(tag, {'clustersSelected', 'clustersSkipped'}))
+                u = directChild(k, 'fileUrl');
+                if ~isempty(u) && ~isempty(regexp(strrep(char(u.getTextContent()), '%5C', '\'), pattern, 'once'))
+                    anchor = k.getNextSibling();
+                    disp_.removeChild(k);
+                end
             end
         end
-        if ~ismember('1', modes)
+        if isempty(anchor), anchor = directChild(disp_, 'channelPositions'); end
+        for m = modes
             el = doc.createElement('spikePresentation');
-            el.appendChild(doc.createTextNode('1'));
-            if isempty(lastMode)
-                disp_.appendChild(el);
-            else
-                disp_.insertBefore(el, lastMode.getNextSibling());
+            el.appendChild(doc.createTextNode(m{1}));
+            insertAt(disp_, el, anchor);
+        end
+        if selectAll
+            for f = 1:numel(urls)
+                sel = doc.createElement('clustersSelected');
+                add(doc, sel, 'fileUrl', urls{f});
+                for id = fileIds{f}'
+                    add(doc, sel, 'cluster', sprintf('%d', id));
+                end
+                insertAt(disp_, sel, anchor);
             end
-            nOn = nOn + 1;
         end
     end
 
     xmlwrite(nrsFile, doc);
-    fprintf('  registered %d cluster files in %s', numel(cluFiles), nrsFile);
-    if nOn, fprintf(', waveform display switched on'); end
+    fprintf('  registered %d cluster files in %s; waveform display on', numel(cluFiles), nrsFile);
+    if selectAll, fprintf(', all units selected'); end
     fprintf('\n');
     if ~wholeSeconds
         warning('jrc_export_neuroscope:modTime', ...
@@ -841,13 +961,14 @@ function colorSpikeGroups(doc, groups)
     %COLORSPIKEGROUPS Give each spike group's channels one spikeColor
     %
     %   Neighbouring groups get clearly different colours, so the spike-group
-    %   palette shows where one group ends and the next begins.
+    %   palette shows where one group ends and the next begins. With one
+    %   group per channel ('radius') the colour follows the shank instead.
     palette = {'#ff3b30', '#34c759', '#007aff', '#ff9500', '#af52de', '#00c7be', ...
                '#ffcc00', '#ff2d55', '#5856d6', '#a2845e'};
     chColor = containers.Map('KeyType', 'double', 'ValueType', 'char');
     for g = 1:numel(groups)
         for ch = groups(g).channels
-            chColor(ch) = palette{mod(g - 1, numel(palette)) + 1};
+            chColor(ch) = palette{mod(groups(g).colorKey - 1, numel(palette)) + 1};
         end
     end
     entries = doc.getElementsByTagName('channelColors');

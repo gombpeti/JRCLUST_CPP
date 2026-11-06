@@ -186,18 +186,22 @@ jrc_export_neuroscope(prm)
 Splits a concatenated sort back into its recordings and writes, beside each
 entry of `rawRecordings`, `<dat name>.res.N` and `.clu.N` per spike group N.
 It rewrites the spike groups in that recording's `.xml`, lists the `.clu` files
-in its `.nrs` and switches on waveform display there (Units > Waveforms), so
-opening the `.dat` in Neuroscope loads every unit and a ticked unit's spikes are
-coloured on its channels. Both files are backed up first, and the anatomical
-groups are left alone. Takes seconds.
+in its `.nrs`, selects every unit and switches on waveform display there, so
+opening the `.dat` in Neuroscope shows each unit's spikes coloured on the traces.
+Both files are backed up first, and the anatomical groups are left alone.
+About a minute for four sessions. **Close Neuroscope first** - it writes its own
+copy of the `.xml` and `.nrs` back when it closes; the script refuses to run
+while it is open.
 
-Neuroscope gives each channel to exactly one spike group and draws a unit on
-all channels of its group, so JRCLUST's overlapping neighbourhoods cannot be
-used as they are. Each shank is cut into contiguous groups of 8-24 sites at
-the places the fewest units spread across, judged from each unit's mean
-waveform, and every unit goes to the group holding its peak site. On rPEG007
-that is 31 groups, with no unit keeping less than half its signal in its own
-group. `'grouping', 'shank'` gives one group per shank instead.
+Each unit is drawn on every channel of its shank within **100 µm above or
+below its peak site** (the site where it is largest), by the probe geometry in
+the `.prm` - 2-3 channels at ~95 µm pitch, up to 12 on a 16 µm shank.
+Neuroscope gives each channel to one spike group, and those windows overlap
+between units, so every channel is its own spike group and a unit is written
+into the `.clu` of each channel in its window: in the cluster palette a unit
+is listed once per channel. `'radiusUm'` changes the window;
+`'grouping', 'jrclust'` instead cuts each shank into contiguous groups of 8-24
+sites, one group per unit.
 
 Unit ids stay JRCLUST's, and each unit keeps its `jrc manual` colour.
 `'klusters', true` also writes the `.spk.N`/`.fet.N` files Klusters needs; that
