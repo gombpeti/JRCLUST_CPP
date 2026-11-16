@@ -1,14 +1,16 @@
 function killFigWav(obj, hFig, ~)
-    %KILLFIGWAV Destroy the main figure, close all other figures
-    if obj.isEnding == 1
-        return; % the save question is open: answer it first, don't kill the window under it
-    end
-
-    if obj.isEnding == 0
-        obj.endSession(); % asks to save, then closes everything (calls back here with isEnding == 2)
-    end
-
+    %KILLFIGWAV Closing the main window: save, then close everything
     if obj.isEnding == 2
-        delete(hFig);
+        delete(hFig); % endSession is closing the windows
+        return;
     end
+    if obj.isEnding == 1
+        return; % a save is running; it closes the windows when it is done
+    end
+
+    if obj.isBusy
+        fprintf(2, 'JRCLUST is still busy - close the window again when it has finished.\n');
+        return;
+    end
+    obj.runExclusive(@() obj.endSession(1));
 end

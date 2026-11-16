@@ -2,7 +2,7 @@ function autoMerge(obj, maxUnitSim)
     %AUTOMERGE Automatically merge units based on their similarity scores
     % snr_thresh = jrclust.utils.inputdlgNum('SNR threshold: ', 'Auto-deletion based on SNR', 10); % also ask about # spikes/unit (or firing rate) @TODO
     if obj.isWorking
-        jrclust.utils.qMsgBox('An operation is in progress.');
+        fprintf(2, 'JRCLUST: an operation is in progress - ignored.\n');
         return;
     end
 

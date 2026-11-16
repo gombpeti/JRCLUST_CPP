@@ -4,7 +4,7 @@ function autoSplit(obj, multisite)
         return;
     end
     if obj.isWorking
-        jrclust.utils.qMsgBox('An operation is in progress.');
+        fprintf(2, 'JRCLUST: an operation is in progress - ignored.\n');
         return;
     end
 
@@ -90,7 +90,9 @@ function autoSplit(obj, multisite)
         nSplits = hFigSplit.figData.nSplits;
     end
 
-    hBox = jrclust.utils.qMsgBox('Splitting... (this closes automatically)', 0, 1);
+    % progress in the Command Window, not in a message box (a box can hang
+    % when figure drawing stalls, and was left behind hidden)
+    fprintf('JRCLUST: splitting unit %d ...\n', iCluster);
 
     % add plots
     hFigSplit.addAxes('vppTime', 'Units', 'Normalized', 'OuterPosition', [0 0 0.7 0.5]);
@@ -161,9 +163,15 @@ function autoSplit(obj, multisite)
     hFigSplit.figData.localSpikes = localSpikes;
     syncSplitControls(hFigSplit);
 
-    jrclust.utils.tryClose(hBox);
-
     updateSplitPlots(hFigSplit);
+
+    % The window was hidden while it was built (line 38). Nothing else shows
+    % it again, so without this it could stay hidden while MATLAB waits for
+    % "Keep splits" / "Discard splits" in it - the GUI then looks frozen.
+    hFigSplit.figApply(@set, 'Visible', 'on');
+    hFigSplit.figApply(@figure); % bring it to the front
+    fprintf('JRCLUST: split window for unit %d is open - choose Keep splits or Discard splits there.\n', iCluster);
+
     unitPart = [];
     while hFigSplit.isReady
         hFigSplit.figApply(@uiwait);
@@ -190,7 +198,7 @@ function autoSplit(obj, multisite)
     if ~isempty(unitPart)
         obj.splitCluster(iCluster, unitPart);
     end
-    drawnow;
+    jrclust.utils.safeDrawnow();
     closeStaleSplitFigures(splitFigPos);
 end
 
@@ -272,7 +280,7 @@ function closeStaleSplitFigures(splitFigPos)
     catch
     end
     closeFiguresNearPosition(splitFigPos);
-    drawnow limitrate;
+    jrclust.utils.safeDrawnow();
 end
 
 function closeBlankFigureShells(splitFigPos)
@@ -284,7 +292,7 @@ function closeBlankFigureShells(splitFigPos)
     catch
     end
     closeFiguresNearPosition(splitFigPos);
-    drawnow limitrate;
+    jrclust.utils.safeDrawnow();
 end
 
 function closeFiguresNearPosition(splitFigPos)

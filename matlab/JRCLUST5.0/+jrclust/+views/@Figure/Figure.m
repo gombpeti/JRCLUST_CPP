@@ -51,10 +51,14 @@ classdef Figure < handle
 
             obj.figName = figName;
 
+            % speeds up older MATLAB; newer releases ignore it and print a
+            % deprecation warning with a full stack trace for every window
+            warnState = warning('off', 'all');
             try
                 set(obj.hFig, 'GraphicsSmoothing', 'off');
             catch
             end
+            warning(warnState);
             
             if figToolbar
                 set(obj.hFig, 'ToolBar', 'figure');

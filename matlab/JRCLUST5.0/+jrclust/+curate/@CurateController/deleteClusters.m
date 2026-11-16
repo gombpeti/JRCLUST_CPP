@@ -1,7 +1,7 @@
 function deleteClusters(obj, deleteMe)
     %DELETECLUSTERS Delete clusters either specified or selected
     if obj.isWorking
-        jrclust.utils.qMsgBox('An operation is in progress.');
+        fprintf(2, 'JRCLUST: an operation is in progress - ignored.\n');
         return;
     end
 

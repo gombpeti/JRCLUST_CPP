@@ -12,15 +12,15 @@ function plotAllFigures(obj)
         % set key and mouse handles
         hFigSim = obj.hFigs('FigSim');
         obj.updateFigSim();
-        hFigSim.hFunKey = @obj.keyPressFigSim;
-        hFigSim.setMouseable(@obj.mouseClickFigSim);
+        hFigSim.hFunKey = @(hO, hE) obj.runExclusive(@obj.keyPressFigSim, hO, hE);
+        hFigSim.setMouseable(@(varargin) obj.runExclusive(@obj.mouseClickFigSim, varargin{:}));
     end
 
     % plot feature projection
     if obj.hasFig('FigProj')
         % set key and mouse handles
         hFigProj = obj.hFigs('FigProj');
-        hFigProj.hFunKey = @obj.keyPressFigProj;
+        hFigProj.hFunKey = @(hO, hE) obj.runExclusive(@obj.keyPressFigProj, hO, hE);
         hFigProj.setMouseable(); % no special mouse function
     end
 
@@ -28,7 +28,7 @@ function plotAllFigures(obj)
     if obj.hasFig('FigTime')
         % set key and mouse handles
         hFigTime = obj.hFigs('FigTime');
-        hFigTime.hFunKey = @obj.keyPressFigTime;
+        hFigTime.hFunKey = @(hO, hE) obj.runExclusive(@obj.keyPressFigTime, hO, hE);
     end
 
     % plot main waveform view
@@ -37,8 +37,8 @@ function plotAllFigures(obj)
         hFigWav = jrclust.views.plotFigWav(obj.hFigs('FigWav'), obj.hClust, obj.maxAmp, obj.channel_idx, obj.showSubset);
         setFigWavXTicks(hFigWav, obj.hClust, 1); % show cluster counts by default
 
-        hFigWav.hFunKey = @obj.keyPressFigWav;
-        hFigWav.setMouseable(@obj.mouseClickFigWav);
+        hFigWav.hFunKey = @(hO, hE) obj.runExclusive(@obj.keyPressFigWav, hO, hE);
+        hFigWav.setMouseable(@(varargin) obj.runExclusive(@obj.mouseClickFigWav, varargin{:}));
 
         % make this guy the key log
         hFigWav.figApply(@set, 'CloseRequestFcn', @obj.killFigWav);

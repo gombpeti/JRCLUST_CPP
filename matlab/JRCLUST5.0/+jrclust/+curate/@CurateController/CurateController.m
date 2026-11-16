@@ -24,6 +24,10 @@ classdef CurateController < handle
         showSubset;     % subset of units to display
     end
 
+    properties (Hidden, Transient)
+        isBusy = 0;     % a GUI callback is running; see runExclusive
+    end
+
     properties (SetAccess=private, Hidden, Transient, SetObservable)
         selected;       % selected clusters, in order of selection
     end

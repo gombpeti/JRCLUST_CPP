@@ -53,5 +53,5 @@ function hFigRD = plotFigRD(hFigRD, hClust, hCfg)
     end
     hFigRD.axApply('default', @title, sprintf('rho-cut: %f, delta-cut: %f', hCfg.log10RhoCut, hCfg.log10DeltaCut));
 
-    drawnow;
+    jrclust.utils.safeDrawnow(); % no queued callbacks run inside this redraw
 end

@@ -1,26 +1,30 @@
-function res = endSession(obj)
+function res = endSession(obj, doSave)
     %ENDSESSION Finish curating and return results
-    % isEnding: 0 = curating, 1 = save question is open, 2 = closing windows
+    %   endSession()     - File > Exit / closing the main window: save, then close
+    %   endSession(0)    - File > Exit without saving
+    %   res = endSession - called by code: return the results, no save
+    %   No question boxes: they need the GUI to draw, and when MATLAB's figure
+    %   drawing stalls they never answered, so Exit could not finish.
+    %   isEnding: 0 = curating, 1 = saving, 2 = closing windows
     res = [];
-    if obj.isEnding
-        return; % a save question is already open (Exit pressed twice), or we are closing
+    if nargin < 2
+        doSave = (nargout == 0);
     end
-
-    if obj.isWorking
-        dlgAns = questdlg('An operation is in progress. Really quit?', 'Operation in progress', 'No');
-        if ~strcmp(dlgAns, 'Yes')
-            return;
-        end
+    if obj.isEnding
+        return; % already saving or closing
     end
 
     obj.isEnding = 1;
-    if nargout == 0
-        success = obj.saveFiles();
-        if ~success
-            obj.isEnding = 0; % cancelled
+    if doSave
+        if ~obj.saveFiles()
+            obj.isEnding = 0; % save failed: stay open so nothing is lost
+            fprintf(2, 'JRCLUST: not closing, because the save failed.\n');
             return;
         end
+    else
+        fprintf('JRCLUST: closing without saving.\n');
     end
+
     obj.isEnding = 2;
     obj.closeFigures();
 

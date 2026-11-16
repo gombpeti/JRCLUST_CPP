@@ -1,5 +1,5 @@
 function addMenu(obj, hFig)
-    drawnow;
+    jrclust.utils.safeDrawnow();
 
     outerPosition = hFig.outerPosition;
     hFig.figApply(@set, 'MenuBar','None');
@@ -17,7 +17,8 @@ function addMenu(obj, hFig)
     uimenu(obj.hMenus('FileMenu'), 'Label', 'Export all traces from the selected unit', 'Callback', @(hO, hE) obj.exportTraces());
     uimenu(obj.hMenus('FileMenu'), 'Label', 'Export firing rate for all units', 'Callback', @(hO, hE) obj.exportFiringRate());
     uimenu(obj.hMenus('FileMenu'), 'Label', 'Print summary', 'Callback', @(hO, hE) obj.summarize(), 'Separator', 'on');
-    uimenu(obj.hMenus('FileMenu'), 'Label', 'Exit', 'Callback', @(hO, hE) obj.endSession(), 'Separator', 'on', 'Accelerator', 'Q');
+    uimenu(obj.hMenus('FileMenu'), 'Label', 'Save and exit', 'Callback', @(hO, hE) obj.endSession(1), 'Separator', 'on', 'Accelerator', 'Q');
+    uimenu(obj.hMenus('FileMenu'), 'Label', 'Exit without saving', 'Callback', @(hO, hE) obj.endSession(0));
 
     obj.hMenus('EditMenu') = hFig.uimenu('Label', 'Edit');
     uimenu(obj.hMenus('EditMenu'), 'Label', '[M]erge', 'Callback', @(hO, hE) obj.mergeSelected());
@@ -75,7 +76,17 @@ function addMenu(obj, hFig)
     obj.hMenus('HelpMenu') = hFig.uimenu( 'Label', 'Help');
     uimenu(obj.hMenus('HelpMenu'), 'Label', '[H]elp', 'Callback', @(hO, hE) obj.keyPressFigWav([], struct('Key', 'h')));
 
-    drawnow;
+    % one action at a time: a menu click while another action is still
+    % running is ignored instead of being run inside it (see runExclusive)
+    hMenuItems = hFig.figApply(@(h) findall(h, 'Type', 'uimenu'));
+    for i = 1:numel(hMenuItems)
+        cb = get(hMenuItems(i), 'Callback');
+        if isa(cb, 'function_handle')
+            set(hMenuItems(i), 'Callback', @(hO, hE) obj.runExclusive(cb, hO, hE));
+        end
+    end
+
+    jrclust.utils.safeDrawnow();
     hFig.outerPosition = outerPosition;
 end
 
