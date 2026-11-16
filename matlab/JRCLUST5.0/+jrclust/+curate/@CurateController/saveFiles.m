@@ -1,6 +1,12 @@
 function success = saveFiles(obj)
     %SAVEFILES Save files to disk
-    dlgAns = questdlg(['Save clustering to ', obj.hCfg.resFile, ' ?'], 'Confirmation', 'Yes');
+    try
+        dlgAns = questdlg(['Save clustering to ', obj.hCfg.resFile, ' ?'], 'Confirmation', 'Yes');
+    catch ME % the question window was destroyed before it was answered
+        warning('Save question was closed (%s). Nothing saved; the session stays open - press Exit again.', ME.message);
+        success = 0;
+        return;
+    end
     if strcmp(dlgAns, 'Yes')
         obj.cRes.curatedOn = now();
 

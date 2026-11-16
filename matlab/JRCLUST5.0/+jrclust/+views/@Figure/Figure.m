@@ -112,7 +112,7 @@ classdef Figure < handle
                 'CameraPosition', oldPos(1, 1:3));
 
             % adjust the camera view angle (equal to zooming in)
-            camzoom(zoomFactor);
+            camzoom(hAx, zoomFactor); % this window's axes, not gca (which may be another window)
             keyFig = get(obj.hFig, 'CurrentCharacter');
 
             [zfX, zfY] = deal(zoomFactor); % zoomFactor X and Y

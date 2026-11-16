@@ -1,5 +1,11 @@
 function res = endSession(obj)
     %ENDSESSION Finish curating and return results
+    % isEnding: 0 = curating, 1 = save question is open, 2 = closing windows
+    res = [];
+    if obj.isEnding
+        return; % a save question is already open (Exit pressed twice), or we are closing
+    end
+
     if obj.isWorking
         dlgAns = questdlg('An operation is in progress. Really quit?', 'Operation in progress', 'No');
         if ~strcmp(dlgAns, 'Yes')
@@ -15,6 +21,7 @@ function res = endSession(obj)
             return;
         end
     end
+    obj.isEnding = 2;
     obj.closeFigures();
 
     obj.currentSite = [];
